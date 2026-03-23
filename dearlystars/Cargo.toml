@@ -2,6 +2,7 @@
 name = "dearlystars"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/faraplay/dearlystars_tool"
 
 [dependencies]
 binrw = "0.15.0"
