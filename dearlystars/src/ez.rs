@@ -5,7 +5,11 @@ use std::path::{Path, PathBuf};
 use binrw::{BinRead, binrw};
 
 use crate::lz10::{compress, decompress};
-use crate::util::{Result, mkdir, pad_to_alignment};
+use crate::util::{Error, Result, mkdir, pad_to_alignment};
+
+fn ez_error(error_message: &str) -> Error {
+    Error::EzError(error_message.to_string())
+}
 
 #[binrw]
 #[brw(little)]
@@ -48,7 +52,7 @@ struct EzpHeader {
 pub fn read_idx(reader: &mut (impl Read + Seek)) -> Result<Vec<EzTableEntry>> {
     let header = EzTableHeader::read(reader)?;
     if header.magic1 != [0x45, 0x5A, 0x54, 0x00, 0x0E, 0x07, 0xD9, 0x07] || header.magic2 != 0x16 {
-        return Err(std::io::Error::other("IDX header is wrong!").into());
+        return Err(ez_error("IDX header is wrong!"));
     }
 
     let mut entries = Vec::<EzTableEntry>::new();
@@ -92,7 +96,7 @@ pub fn extract_bin(
     let mut buf_reader = std::io::BufReader::new(reader);
     let header = EzpHeader::read(&mut buf_reader)?;
     if header.magic1 != [0x45, 0x5A, 0x50, 0x00, 0x0E, 0x07, 0xD9, 0x07] || header.magic2 != 0x16 {
-        return Err(std::io::Error::other("BIN header is wrong!").into());
+        return Err(ez_error("BIN header is wrong!"));
     }
     let mut names_buffer = Cursor::new(Vec::<u8>::new());
     buf_reader.seek(std::io::SeekFrom::Start(header.names_offset as u64))?;
@@ -111,14 +115,15 @@ pub fn extract_bin(
         names_buffer.seek(std::io::SeekFrom::Start(entry.name_offset as u64))?;
         names_buffer.read_until(0u8, &mut name_buffer)?;
         name_buffer.pop();
-        let name = String::from_utf8(name_buffer)?;
+        let name =
+            String::from_utf8(name_buffer).or(Err(ez_error("File name is invalid UTF8!")))?;
 
         if let Some(dir_name) = name
             .strip_suffix("_BEGIN")
             .or_else(|| name.strip_suffix("_START"))
         {
             if entry.decompressed_size() != 0 {
-                return Err(std::io::Error::other("BEGIN/START entry has nonzero size!").into());
+                return Err(ez_error("BEGIN/START entry has nonzero size!"));
             }
             writeln!(
                 &mut file_list_writer,
@@ -136,13 +141,12 @@ pub fn extract_bin(
 
         if let Some(dir_name) = name.strip_suffix("_END") {
             if entry.decompressed_size() != 0 {
-                return Err(std::io::Error::other("END entry has nonzero size!").into());
+                return Err(ez_error("END entry has nonzero size!"));
             }
             if path_stack.pop().as_ref().map(|s| s.as_str()) != Some(dir_name) {
-                return Err(std::io::Error::other(
+                return Err(ez_error(
                     "END dir name does not match BEGIN/START dir name!",
-                )
-                .into());
+                ));
             }
             writeln!(
                 &mut file_list_writer,
@@ -191,8 +195,9 @@ pub fn rebuild_bin(
     let index_path: PathBuf = [in_dir, Path::new(".index")].iter().collect();
     let mut index_lines = std::io::BufReader::new(File::open(index_path)?).lines();
     let something1 = match index_lines.next() {
-        Some(line) => u16::from_str_radix(&line?, 16)?,
-        None => return Err(std::io::Error::other("index has no lines!").into()),
+        Some(line) => u16::from_str_radix(&line?, 16)
+            .or(Err(ez_error("Could not parse first line of index as hex!")))?,
+        None => return Err(ez_error("index has no lines!")),
     };
 
     let mut entry_names = Vec::<String>::new();
@@ -241,10 +246,9 @@ pub fn rebuild_bin(
                 name_offset,
             });
             if path_stack.pop().as_ref().map(|s| s.as_str()) != Some(dir_name) {
-                return Err(std::io::Error::other(
+                return Err(ez_error(
                     "END dir name does not match BEGIN/START dir name!",
-                )
-                .into());
+                ));
             }
             continue;
         }
@@ -253,11 +257,12 @@ pub fn rebuild_bin(
             .chain(path_stack.iter().map(|s| Path::new(s)))
             .chain(std::iter::once(Path::new(&format!("{index:04}_{name}"))))
             .collect();
+        eprintln!("Adding {}", entry_path.display());
 
         let mut entry_reader = File::open(&entry_path)?;
         let decompressed_size = entry_reader.seek(SeekFrom::End(0))?;
         if decompressed_size > 0x0FFFFFFF {
-            return Err(std::io::Error::other("File is too large to add to .bin!").into());
+            return Err(ez_error("File is too large to add to .bin!"));
         }
         let decompressed_size = decompressed_size as u32;
         entry_reader.seek(SeekFrom::Start(0))?;

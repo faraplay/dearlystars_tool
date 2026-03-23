@@ -307,7 +307,7 @@ fn add_dir_tree_node(
             Some(node_name) => &format!("{}/{}", node_name, child_node.name),
             None => &child_node.name,
         };
-        println!("{}", child_node_name);
+        eprintln!("{}", child_node_name);
         fat_entries.push(add_file(&mut source.open_file(child_node_name)?, writer)?);
     }
     // Then iterate through subdirectories

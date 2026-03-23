@@ -60,7 +60,6 @@ fn write_nds_to_dir(source: &mut impl NdsSource, out_dir: impl AsRef<Path>) -> R
 
     let out_path: PathBuf = [out_dir, Path::new("data")].iter().collect();
     mkdir(&out_path)?;
-    println!("{:?}", &source.root_node());
     write_node(source, &out_path, None, &source.root_node())?;
 
     Ok(())
