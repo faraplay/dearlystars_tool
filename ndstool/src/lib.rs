@@ -1,6 +1,9 @@
+mod digest;
 mod dir_source;
 mod error;
 mod header;
+mod key_encryption;
+mod modcrypt;
 mod overlay;
 mod rom_source;
 mod source;

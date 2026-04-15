@@ -5,7 +5,7 @@ use std::{
 
 use binrw::BinRead;
 
-use crate::Result;
+use crate::{Result, modcrypt::get_key_ivs};
 use crate::{
     error::NdsError,
     header::{DsHeader, DsiExtraFields},
@@ -33,6 +33,12 @@ pub struct DsiRomFile {
     nds_rom_file: NdsRomFile,
     dsi_fields: DsiExtraFields,
     arm9i_has_footer: bool,
+    is_modcrypted: bool,
+    key: u128,
+    iv1: u128,
+    iv2: u128,
+    decrypted_arm9i: Option<Vec<u8>>,
+    decrypted_arm7i: Option<Vec<u8>>,
 }
 
 pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
@@ -82,10 +88,20 @@ pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
             arm7_overlay_pos_sizes,
             root_node,
         };
+        let is_modcrypted = (header.dsi_flags & 0x2) != 0;
+        let (key, iv1, iv2) = get_key_ivs(&header, &dsi_fields);
+        let decrypted_arm9i = None;
+        let decrypted_arm7i = None;
         Ok(RomFile::Dsi(DsiRomFile {
             nds_rom_file,
             dsi_fields,
             arm9i_has_footer,
+            is_modcrypted,
+            key,
+            iv1,
+            iv2,
+            decrypted_arm9i,
+            decrypted_arm7i,
         }))
     } else {
         reader.seek(SeekFrom::Start(header.banner_offset.into()))?;

@@ -30,6 +30,11 @@ pub fn pad_to_position(
     Ok(())
 }
 
+pub fn pad_n(writer: &mut (impl Write + Seek), n: u32, pad_byte: u8) -> Result<()> {
+    std::io::copy(&mut std::io::repeat(pad_byte).take(n as u64), writer)?;
+    Ok(())
+}
+
 pub fn mkdir(path: &Path) -> std::io::Result<()> {
     match std::fs::create_dir(path) {
         Ok(()) => Ok(()),

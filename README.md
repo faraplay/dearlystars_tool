@@ -29,3 +29,8 @@
     ```
 
     Note that the first of these commands can take several minutes!
+
+## Acknowledgements
+
+Code for the `ndstool` module is heavily based on [the `ndstool` program](https://github.com/devkitPro/ndstool)
+and the very detailed documentation [GBATEK](https://problemkaputt.de/gbatek.htm).

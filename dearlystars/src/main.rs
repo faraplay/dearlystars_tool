@@ -113,7 +113,13 @@ fn main() {
         } => {
             let mut dir_source =
                 read_from_dir(in_directory).expect("Error reading data from directory!");
-            let mut nds_writer = File::create(out_nds_file).expect("Error creating rom file!");
+            let mut nds_writer = File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(out_nds_file)
+                .expect("Error creating rom file!");
             write_to_rom(&mut dir_source, &mut nds_writer).expect("Error extracting data to rom!");
             eprintln!("Rebuilt nds rom file.");
         }
