@@ -1,6 +1,6 @@
 [package]
 name = "dearlystars"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 repository = "https://github.com/faraplay/dearlystars_tool"
 
@@ -10,3 +10,4 @@ clap = { version = "4.5.55", features = ["derive"] }
 encoding_rs = "0.8.35"
 ndstool = { version = "0.2.0", path = "../ndstool" }
 nom = "8.0.0"
+png = "0.18.1"

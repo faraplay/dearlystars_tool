@@ -7,7 +7,10 @@ pub enum Error {
     EzError(String),
     BbqParseError(String),
     YamlParseError(String),
+    GldParseError(String),
     CsvParseError(Box<dyn std::error::Error>),
+    PngEncodingError(png::EncodingError),
+    PngDecodingError(png::DecodingError),
     Other(Box<dyn std::error::Error>),
 }
 
@@ -20,7 +23,10 @@ impl std::fmt::Display for Error {
             Error::EzError(e) => e.fmt(f),
             Error::BbqParseError(e) => e.fmt(f),
             Error::YamlParseError(e) => e.fmt(f),
+            Error::GldParseError(e) => e.fmt(f),
             Error::CsvParseError(e) => e.fmt(f),
+            Error::PngEncodingError(e) => e.fmt(f),
+            Error::PngDecodingError(e) => e.fmt(f),
             Error::Other(e) => e.fmt(f),
         }
     }
@@ -37,6 +43,24 @@ impl From<binrw::Error> for Error {
         match value {
             binrw::Error::Io(io_error) => Error::IoError(io_error),
             _ => Error::Other(value.into()),
+        }
+    }
+}
+
+impl From<png::EncodingError> for Error {
+    fn from(value: png::EncodingError) -> Self {
+        match value {
+            png::EncodingError::IoError(io_error) => Error::IoError(io_error),
+            _ => Error::PngEncodingError(value),
+        }
+    }
+}
+
+impl From<png::DecodingError> for Error {
+    fn from(value: png::DecodingError) -> Self {
+        match value {
+            png::DecodingError::IoError(io_error) => Error::IoError(io_error),
+            _ => Error::PngDecodingError(value),
         }
     }
 }

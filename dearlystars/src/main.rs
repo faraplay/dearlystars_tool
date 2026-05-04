@@ -17,6 +17,7 @@ use crate::ez::rebuild_bin;
 mod bbq;
 mod csv;
 mod ez;
+mod gld;
 mod lz10;
 mod util;
 
@@ -92,6 +93,24 @@ enum Commands {
         in_csv_dir: PathBuf,
         /// The directory containing the .bbq files to modify.
         bbq_dir: PathBuf,
+    },
+    /// Convert a gld file into png files.
+    GldToPng {
+        /// The input directory containing .GLD files.
+        in_gld_dir: PathBuf,
+        /// The output directory to contain the png files.
+        out_dir: PathBuf,
+    },
+    /// Inject images from png files into GLD files in a specified folder.
+    /// Note that this overwrites the .GLD files.
+    InjectGldImages {
+        /// The directory containing the png files to inject.
+        in_png_dir: PathBuf,
+        /// The directory containing the .GLD files.
+        gld_dir: PathBuf,
+        /// (Optional) The output directory to contain previews of the recolored images.
+        #[arg(short = 'p')]
+        preview_dir: Option<PathBuf>,
     },
 }
 
@@ -185,6 +204,22 @@ fn main() {
         } => {
             bbq::inject_text(in_csv_dir, bbq_dir).expect("Error injecting text into bbq files!");
             eprintln!("Injected text into bbq files.");
+        }
+        Commands::GldToPng {
+            in_gld_dir,
+            out_dir,
+        } => {
+            gld::extract_glds(in_gld_dir, out_dir).expect("Error extracting images!");
+            eprintln!("Extracted images from gld.");
+        }
+        Commands::InjectGldImages {
+            in_png_dir,
+            gld_dir,
+            preview_dir,
+        } => {
+            gld::inject_glds(in_png_dir, gld_dir, preview_dir.as_deref())
+                .expect("Error injecting pictures into gld files!");
+            eprintln!("Injected pictures into gld files.");
         }
     }
 }

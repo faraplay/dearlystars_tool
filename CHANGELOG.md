@@ -1,3 +1,11 @@
+## Version 0.3.0
+
+Add basic GLD image extraction and injection.
+
+Changes:
+
+- Add GLD image extraction and injection functionality.
+
 ## Version 0.2.0
 
 Improve accuracy of the `.nds` rom built by `ndstool`.
