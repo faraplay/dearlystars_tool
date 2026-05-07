@@ -115,7 +115,7 @@ pub struct ScriptLine {
 impl ScriptLine {
     pub fn to_csv_string(&self) -> String {
         format!(
-            "{}\t{}\t{}\t\"{}\"\t\"{}\"",
+            "{},{},{},\"{}\",\"{}\"",
             self.speaker_id,
             self.audio_flag,
             self.audio_id,
@@ -259,17 +259,17 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
         .to_str()
         .ok_or(std::io::Error::other("Error getting directory base name!"))?;
     eprintln!("Extracting bbqs from {bbq_dir_basename}.");
-    let out_tsv_name = PathBuf::from_str(&format!("{bbq_dir_basename}.csv"))?;
-    let out_mes_tsv_name = PathBuf::from_str(&format!("{bbq_dir_basename}_MES.csv"))?;
-    let out_tsv_path = out_dir.join(&out_tsv_name);
-    let out_mes_tsv_path = out_dir.join(&out_mes_tsv_name);
-    let mut tsv_writer = std::fs::File::create(&out_tsv_path)?;
-    let mut mes_tsv_writer = std::fs::File::create(&out_mes_tsv_path)?;
+    let out_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}.csv"))?;
+    let out_mes_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}_MES.csv"))?;
+    let out_csv_path = out_dir.join(&out_csv_name);
+    let out_mes_csv_path = out_dir.join(&out_mes_csv_name);
+    let mut csv_writer = std::fs::File::create(&out_csv_path)?;
+    let mut mes_csv_writer = std::fs::File::create(&out_mes_csv_path)?;
     writeln!(
-        mes_tsv_writer,
-        "Filename\tSpeaker id\tAudio flag\tAudio id\tSpeaker text\tLine text"
+        mes_csv_writer,
+        "Filename,Speaker id,Audio flag,Audio id,Speaker text,Line text"
     )?;
-    writeln!(tsv_writer, "Filename\tText",)?;
+    writeln!(csv_writer, "Filename,Text",)?;
     for result in std::fs::read_dir(bbq_dir)? {
         let dir_entry = result?;
         let file_type = dir_entry.file_type()?;
@@ -291,7 +291,7 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
                         "Error getting script lines from bbq!",
                     ))?;
                     for line in lines {
-                        writeln!(mes_tsv_writer, "{}\t{}", filename, line.to_csv_string())?;
+                        writeln!(mes_csv_writer, "{},{}", filename, line.to_csv_string())?;
                     }
                 } else {
                     let strings = bbq
@@ -299,8 +299,8 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
                         .ok_or(std::io::Error::other("Error getting strings from bbq!"))?;
                     for line in strings {
                         writeln!(
-                            tsv_writer,
-                            "{}\t\"{}\"",
+                            csv_writer,
+                            "{},\"{}\"",
                             filename,
                             line.replace("\"", "\"\"")
                         )?;
@@ -331,16 +331,21 @@ fn row_to_message(row: Vec<String>) -> Option<(String, (String, String))> {
     let mut row_iter = row.into_iter();
     let filename = row_iter.next()?;
     let speaker_text = row_iter.next().unwrap_or_default();
-    let default_text = row_iter.next().unwrap_or_default();
-    let replace_text = row_iter.next().unwrap_or_default();
+    let line_text = row_iter.next().unwrap_or_default();
+    let speaker_replace_text = row_iter.next().unwrap_or_default();
+    let line_replace_text = row_iter.next().unwrap_or_default();
     Some((
         filename,
         (
-            speaker_text,
-            if !replace_text.is_empty() {
-                replace_text
+            if !speaker_replace_text.is_empty() {
+                speaker_replace_text
             } else {
-                default_text
+                speaker_text
+            },
+            if !line_replace_text.is_empty() {
+                line_replace_text
+            } else {
+                line_text
             },
         ),
     ))

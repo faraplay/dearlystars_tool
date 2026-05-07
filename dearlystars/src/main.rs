@@ -13,6 +13,7 @@ use crate::bbq::Bbq;
 use crate::ez::extract_bin;
 use crate::ez::read_idx;
 use crate::ez::rebuild_bin;
+use crate::util::mkdir;
 
 mod bbq;
 mod csv;
@@ -195,6 +196,7 @@ fn main() {
             in_bbq_dir,
             out_dir,
         } => {
+            mkdir(out_dir).expect("Error creating output directory!");
             bbq::extract_text(in_bbq_dir, out_dir).expect("Error extracting text from bbq files!");
             eprintln!("Extracted text from bbq files.");
         }

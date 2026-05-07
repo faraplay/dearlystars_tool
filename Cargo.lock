@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "dearlystars"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "binrw",
  "clap",

@@ -1,3 +1,14 @@
+## Version 0.3.1
+
+Changes:
+
+- Changed BBQ message insertion to use new column format with a translated speaker name column.
+- BBQ text extraction now outputs comma-separated values instead of tab-separated values.
+
+Fixes:
+
+- Black pixels are no longer turned into transparent pixels during GLD image injection.
+
 ## Version 0.3.0
 
 Add basic GLD image extraction and injection.

@@ -587,7 +587,8 @@ impl Gld {
                 .iter()
                 .map(|chunk| {
                     (
-                        get_color_index(chunk[0..3].try_into().unwrap(), palette) as u8,
+                        get_color_index(chunk[0..3].try_into().unwrap(), chunk[3] == 0, palette)
+                            as u8,
                         chunk[3],
                     )
                 })
@@ -597,7 +598,7 @@ impl Gld {
                 .as_chunks::<3>()
                 .0
                 .iter()
-                .map(|chunk| (get_color_index(&chunk, palette) as u8, 0xFF))
+                .map(|chunk| (get_color_index(&chunk, false, palette) as u8, 0xFF))
                 .collect::<Vec<_>>()
         };
 
@@ -745,11 +746,11 @@ fn unzip_palette<'a>(palette: impl IntoIterator<Item = &'a u16>) -> (Vec<[u8; 3]
         .unzip()
 }
 
-fn get_color_index<'a>(color: &[u8; 3], palette: &[u16]) -> usize {
+fn get_color_index<'a>(color: &[u8; 3], is_transparent: bool, palette: &[u16]) -> usize {
     let mut min_distance = MAX_COLOR_DISTANCE;
     let mut min_index = 0;
     for (index, palette_color) in palette.iter().enumerate() {
-        let distance = color_distance(color, *palette_color);
+        let distance = color_distance(color, is_transparent, *palette_color);
         if distance == 0 {
             return index;
         }
@@ -761,11 +762,16 @@ fn get_color_index<'a>(color: &[u8; 3], palette: &[u16]) -> usize {
     min_index
 }
 
-const MAX_COLOR_DISTANCE: i32 = 31 * 3;
+const MAX_COLOR_DISTANCE: i32 = 100 + 31 * 3;
 
-fn color_distance(color: &[u8; 3], palette_color: u16) -> i32 {
+fn color_distance(color: &[u8; 3], is_transparent: bool, palette_color: u16) -> i32 {
     let delta_r = ((color[0] >> 3) as i32) - (((palette_color >> 0) & 0x1F) as i32);
     let delta_g = ((color[1] >> 3) as i32) - (((palette_color >> 5) & 0x1F) as i32);
     let delta_b = ((color[2] >> 3) as i32) - (((palette_color >> 10) & 0x1F) as i32);
-    return delta_r.abs() + delta_g.abs() + delta_b.abs();
+    let delta_a = if is_transparent ^ (palette_color >> 15 == 0) {
+        100
+    } else {
+        0
+    };
+    return delta_r.abs() + delta_g.abs() + delta_b.abs() + delta_a;
 }

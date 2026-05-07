@@ -31,7 +31,7 @@ fn parse_string(input: &str) -> IResult<&str, String> {
     });
     alt((
         delimited(char('"'), build_string, char('"')),
-        map(is_not(",\"\n"), |s: &str| s.to_string()),
+        map(is_not(",\"\r\n"), |s: &str| s.to_string()),
         value(String::new(), take(0usize))
     ))
     .parse(input)
