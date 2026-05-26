@@ -9,17 +9,14 @@ use std::path::PathBuf;
 
 use crate::csv::parse_csv;
 
-//*********************************************************************************************
-// apply_translation
-//
-// Usage:   Apply translations to text within files containing executible code
-//
-// Parms:   1. file     - binary file being written to (class type File)
-//          2. csv_data - data from CSV containing translation, offset within file, and max byte length
-//          3. row      - counting variable passed in to determine the Row for accessing csv_data
-//          4. blanks   - string of NUL (0x00) chars that a substring is made from, which is used to fill
-//                        the spot where the translation is placed
-//*********************************************************************************************
+/// Apply translations to text within files containing executible code
+///
+/// Arguments:
+/// * `file`     - binary file being written to (class type File)
+/// * `csv_data` - data from CSV containing translation, offset within file, and max byte length
+/// * `row`      - counting variable passed in to determine the Row for accessing csv_data
+/// * `blanks`   - string of NUL (0x00) chars that a substring is made from, which is used to fill
+///                        the spot where the translation is placed
 fn apply_translation(
     mut file: &File,
     csv_data: &Vec<Vec<String>>,
@@ -65,15 +62,12 @@ fn apply_translation(
     return Ok(());
 }
 
-//*********************************************************************************************
-// arm9overlay
-//
-// Usage:   Implement the command called from main.rs to apply translations to text within
-//          files containing executible code
-//
-// Parms:   1. in_dir       - directory containing 'arm9.bin' and the 'overlay' folder
-//          2. in_csv_dir   - directory containing CSV translation files
-//*********************************************************************************************
+/// Implement the command called from main.rs to apply translations to text within
+///          files containing executible code
+///
+/// Arguments:
+/// * `in_dir`       - directory containing 'arm9.bin' and the 'overlay' folder
+/// * `in_csv_dir`   - directory containing CSV translation files
 pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
     // in_dir     - Directory Containing the Arm9 and Overlay Files (dearlystars_extracted)
     // in_csv_dir - Directory where CSV is (translated_csv)
