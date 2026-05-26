@@ -21,6 +21,7 @@ mod ez;
 mod gld;
 mod lz10;
 mod util;
+mod arm9overlay;    //add my new module
 
 #[derive(Parser)]
 struct Cli {
@@ -135,6 +136,15 @@ enum Commands {
         /// (Optional) The output directory to contain previews of the recolored images.
         #[arg(short = 'p')]
         preview_dir: Option<PathBuf>,
+    },
+
+
+    
+    Arm9Overlay {
+        /// Directory Containing the Arm9 and Overlay Files (dearlystars_extracted)
+        in_dir: PathBuf,
+        /// Directory where CSV is (translated_csv)
+        in_csv_dir: PathBuf,
     },
 }
 
@@ -269,6 +279,18 @@ fn main() {
             gld::inject_glds(in_png_dir, gld_dir, preview_dir.as_deref())
                 .expect("Error injecting pictures into gld files!");
             eprintln!("Injected pictures into gld files.");
+        }
+
+
+
+        Commands::Arm9Overlay {
+            in_dir,
+            in_csv_dir,
+        } => {
+            arm9overlay::arm9overlay(in_dir, in_csv_dir)
+            .expect("Error injecting into ARM9 or Overlay Files!");
+
+            eprintln!("Injected into Arm9 and Overlay files.")
         }
     }
 }
