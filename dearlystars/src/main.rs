@@ -15,13 +15,13 @@ use crate::ez::read_idx;
 use crate::ez::rebuild_bin;
 use crate::util::mkdir;
 
+mod arm9overlay;
 mod bbq;
 mod csv;
 mod ez;
 mod gld;
 mod lz10;
 mod util;
-mod arm9overlay;    //add my new module
 
 #[derive(Parser)]
 struct Cli {
@@ -138,8 +138,6 @@ enum Commands {
         preview_dir: Option<PathBuf>,
     },
 
-
-    
     Arm9Overlay {
         /// Directory Containing the Arm9 and Overlay Files (dearlystars_extracted)
         in_dir: PathBuf,
@@ -281,14 +279,9 @@ fn main() {
             eprintln!("Injected pictures into gld files.");
         }
 
-
-
-        Commands::Arm9Overlay {
-            in_dir,
-            in_csv_dir,
-        } => {
+        Commands::Arm9Overlay { in_dir, in_csv_dir } => {
             arm9overlay::arm9overlay(in_dir, in_csv_dir)
-            .expect("Error injecting into ARM9 or Overlay Files!");
+                .expect("Error injecting into ARM9 or Overlay Files!");
 
             eprintln!("Injected into Arm9 and Overlay files.")
         }
