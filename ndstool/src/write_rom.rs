@@ -6,6 +6,7 @@ use crate::Result;
 use crate::digest::sha1_hmac;
 use crate::key_encryption::{decrypt_arm9, encrypt_arm9};
 use crate::modcrypt::modcrypt;
+use crate::rom_source::RomFileLocation;
 use crate::util::{pad_n, pad_to_alignment, pad_to_position};
 use crate::{
     header::{DsHeader, DsiExtraFields},
@@ -55,7 +56,7 @@ fn write_nds_rom(
 ) -> Result<()> {
     let mut header = DsHeader::read(&mut source.open_header()?)?;
 
-    header.rom_header_size = 0x200;
+    header.rom_header_size = 0x4000;
 
     // load a logo
     // use Nintendo logo
@@ -69,6 +70,12 @@ fn write_nds_rom(
     write_filesystem(source, writer, &mut header, &overlay_fat_entries)?;
 
     set_file_size(writer, &mut header)?;
+
+    // pad out rest of file with 0xFF
+    pad_to_position(writer, 1 << (header.devicecap + 17), 0xFF)?;
+
+    // decrypt secure area
+    decrypt_secure_area(writer, &mut header)?;
 
     writer.seek(SeekFrom::Start(0))?;
     header.write(writer)?;
@@ -158,7 +165,7 @@ fn write_arm9(
     writer: &mut (impl Read + Write + Seek),
     header: &mut DsHeader,
     b_secure_syscalls: bool,
-) -> Result<Vec<(u32, u32)>> {
+) -> Result<Vec<RomFileLocation>> {
     // ARM9 binary
     {
         header.arm9_rom_offset = pad_to_alignment(writer, ARM9_ALIGNMENT, 0xFF)?;
@@ -170,11 +177,13 @@ fn write_arm9(
                 (value1, value2) => (value1, value2),
             };
 
+        let mut arm9_reader = source.open_arm9()?;
+
         // add dummy area for secure syscalls
         header.arm9_size = 0;
         if b_secure_syscalls {
-            let mut arm9_reader = source.open_arm9()?;
             let x = u32::read_le(&mut arm9_reader)?;
+            arm9_reader.seek(SeekFrom::Start(0))?;
             if x != 0xE7FFDEFF {
                 for _ in (0..0x800).step_by(4) {
                     0xE7FFDEFFu32.write_le(writer)?;
@@ -183,7 +192,7 @@ fn write_arm9(
             }
         }
 
-        let size = copy_get_size_without_footer(&mut source.open_arm9()?, writer)?;
+        let size = copy_get_size_without_footer(&mut arm9_reader, writer)?;
         header.arm9_entry_address = entry_address;
         header.arm9_ram_address = ram_address;
         header.arm9_size += size.next_multiple_of(4);
@@ -213,20 +222,20 @@ fn write_arm9(
     }
 
     // manually added ARM9 overlay files. each file is padded with 0xFF's
-    let mut arm9_overlay_fat_entries = Vec::<(u32, u32)>::new();
+    let mut arm9_overlay_locations = Vec::<RomFileLocation>::new();
     for overlay_index in 0..arm9_overlay_files {
-        let fat_entry = add_file(&mut source.open_arm9_overlay(overlay_index)?, writer)?;
-        arm9_overlay_fat_entries.push(fat_entry);
+        let location = add_file(&mut source.open_arm9_overlay(overlay_index)?, writer)?;
+        arm9_overlay_locations.push(location);
     }
 
-    Ok(arm9_overlay_fat_entries)
+    Ok(arm9_overlay_locations)
 }
 
 fn write_arm7(
     source: &mut impl NdsSource,
     writer: &mut (impl Read + Write + Seek),
     header: &mut DsHeader,
-) -> Result<Vec<(u32, u32)>> {
+) -> Result<Vec<RomFileLocation>> {
     // ARM7 binary
     header.arm7_rom_offset = std::cmp::max(
         (writer.stream_position()? as u32).next_multiple_of(ARM7_ALIGNMENT),
@@ -258,20 +267,20 @@ fn write_arm7(
     }
 
     // manually added ARM7 overlay files, just like for ARM9
-    let mut arm7_overlay_fat_entries = Vec::<(u32, u32)>::new();
+    let mut arm7_overlay_location = Vec::<RomFileLocation>::new();
     for overlay_index in 0..arm7_overlay_files {
-        let fat_entry = add_file(&mut source.open_arm7_overlay(overlay_index)?, writer)?;
-        arm7_overlay_fat_entries.push(fat_entry);
+        let location = add_file(&mut source.open_arm7_overlay(overlay_index)?, writer)?;
+        arm7_overlay_location.push(location);
     }
 
-    Ok(arm7_overlay_fat_entries)
+    Ok(arm7_overlay_location)
 }
 
 fn write_filesystem(
     source: &mut impl NdsSource,
     writer: &mut (impl Read + Write + Seek),
     header: &mut DsHeader,
-    overlay_fat_entries: &[(u32, u32)],
+    overlay_locations: &[RomFileLocation],
 ) -> Result<()> {
     // read directory structure
     let root_node = &source.root_node();
@@ -279,7 +288,7 @@ fn write_filesystem(
     // calculate offsets required for FNT and FAT
     header.fnt_offset = (writer.stream_position()? as u32).next_multiple_of(FNT_ALIGNMENT);
     writer.seek(SeekFrom::Start(header.fnt_offset as u64))?;
-    let (fnt_size, fat_size) = add_name_table(writer, root_node, overlay_fat_entries.len() as u16)?;
+    let (fnt_size, fat_size) = add_name_table(writer, root_node, overlay_locations.len() as u16)?;
 
     header.fnt_size = fnt_size;
     header.fat_offset = (header.fnt_offset + header.fnt_size).next_multiple_of(FAT_ALIGNMENT);
@@ -290,12 +299,23 @@ fn write_filesystem(
     pad_to_position(writer, header.banner_offset, 0xFF)?;
     std::io::copy(&mut source.open_banner()?, writer)? as u32;
 
-    let file_fat_entries = add_files(source, writer, root_node)?;
+    let file_locations = add_files(source, writer, root_node)?;
     writer.seek(SeekFrom::Start(header.fat_offset as u64))?;
-    overlay_fat_entries.write_le(writer)?;
-    file_fat_entries.write_le(writer)?;
+    write_locations_to_fat(overlay_locations, writer)?;
+    write_locations_to_fat(&file_locations, writer)?;
 
     writer.seek(SeekFrom::End(0))?;
+    Ok(())
+}
+
+fn write_locations_to_fat(
+    locations: &[RomFileLocation],
+    writer: &mut (impl Write + Seek),
+) -> Result<()> {
+    for location in locations {
+        location.pos.write_le(writer)?;
+        (location.pos + location.size).write_le(writer)?;
+    }
     Ok(())
 }
 
@@ -532,10 +552,10 @@ fn copy_get_size_without_footer(
 fn add_file(
     reader: &mut (impl Read + Seek),
     writer: &mut (impl Write + Seek),
-) -> Result<(u32, u32)> {
-    let top: u32 = pad_to_alignment(writer, FILE_ALIGNMENT, 0xFF)?;
+) -> Result<RomFileLocation> {
+    let pos: u32 = pad_to_alignment(writer, FILE_ALIGNMENT, 0xFF)?;
     let size: u32 = std::io::copy(reader, writer)? as u32;
-    Ok((top, top + size))
+    Ok(RomFileLocation { pos, size })
 }
 
 fn add_name_table(
@@ -558,7 +578,7 @@ fn add_files(
     source: &mut impl NdsSource,
     writer: &mut (impl Write + Seek),
     root_node: &SourceTreeNode,
-) -> Result<Vec<(u32, u32)>> {
+) -> Result<Vec<RomFileLocation>> {
     add_dir_tree_node(source, writer, None, root_node)
 }
 
@@ -567,9 +587,9 @@ fn add_dir_tree_node(
     writer: &mut (impl Write + Seek),
     node_path: Option<&str>,
     node: &SourceTreeNode,
-) -> Result<Vec<(u32, u32)>> {
+) -> Result<Vec<RomFileLocation>> {
     let child_nodes = node.children.as_ref().unwrap();
-    let mut fat_entries = Vec::<(u32, u32)>::new();
+    let mut child_node_locations = Vec::<RomFileLocation>::new();
     // Iterate through files that are direct children first
     for child_node in child_nodes {
         if child_node.children.is_some() {
@@ -580,7 +600,7 @@ fn add_dir_tree_node(
             None => &child_node.name,
         };
         eprintln!("{}", child_node_name);
-        fat_entries.push(add_file(&mut source.open_file(child_node_name)?, writer)?);
+        child_node_locations.push(add_file(&mut source.open_file(child_node_name)?, writer)?);
     }
     // Then iterate through subdirectories
     for child_node in child_nodes {
@@ -591,8 +611,8 @@ fn add_dir_tree_node(
             Some(node_name) => &format!("{}/{}", node_name, child_node.name),
             None => &child_node.name,
         };
-        fat_entries
+        child_node_locations
             .extend(add_dir_tree_node(source, writer, Some(child_node_name), child_node)?.iter());
     }
-    Ok(fat_entries)
+    Ok(child_node_locations)
 }

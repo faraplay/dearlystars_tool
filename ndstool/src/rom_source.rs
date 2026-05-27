@@ -17,6 +17,12 @@ use crate::{
 mod rom_tree_node;
 mod source_impl;
 
+#[derive(Clone, Copy)]
+pub struct RomFileLocation {
+    pub pos: u32,
+    pub size: u32,
+}
+
 type RomFile = Source<NdsRomFile, DsiRomFile>;
 
 pub struct NdsRomFile {
@@ -25,8 +31,8 @@ pub struct NdsRomFile {
     arm9_has_footer: bool,
     banner_size: u32,
     header_size: u32,
-    arm9_overlay_pos_sizes: Vec<(u32, u32)>,
-    arm7_overlay_pos_sizes: Vec<(u32, u32)>,
+    arm9_overlay_metadatas: Vec<(OverlayEntry, RomFileLocation)>,
+    arm7_overlay_metadatas: Vec<(OverlayEntry, RomFileLocation)>,
     root_node: RomTreeNode,
 }
 pub struct DsiRomFile {
@@ -37,8 +43,58 @@ pub struct DsiRomFile {
     key: u128,
     iv1: u128,
     iv2: u128,
+
+    // lazily created
     decrypted_arm9i: Option<Vec<u8>>,
     decrypted_arm7i: Option<Vec<u8>>,
+}
+
+impl NdsRomFile {
+    fn new(
+        reader: File,
+        header: DsHeader,
+        arm9_has_footer: bool,
+        banner_size: u32,
+        header_size: u32,
+        arm9_overlay_metadatas: Vec<(OverlayEntry, RomFileLocation)>,
+        arm7_overlay_metadatas: Vec<(OverlayEntry, RomFileLocation)>,
+        root_node: RomTreeNode,
+    ) -> NdsRomFile {
+        NdsRomFile {
+            reader,
+            header,
+            arm9_has_footer,
+            banner_size,
+            header_size,
+            arm9_overlay_metadatas,
+            arm7_overlay_metadatas,
+            root_node,
+        }
+    }
+}
+
+impl DsiRomFile {
+    fn new(
+        nds_rom_file: NdsRomFile,
+        dsi_fields: DsiExtraFields,
+        arm9i_has_footer: bool,
+        is_modcrypted: bool,
+        key: u128,
+        iv1: u128,
+        iv2: u128,
+    ) -> DsiRomFile {
+        DsiRomFile {
+            nds_rom_file,
+            dsi_fields,
+            arm9i_has_footer,
+            is_modcrypted,
+            key,
+            iv1,
+            iv2,
+            decrypted_arm9i: None,
+            decrypted_arm7i: None,
+        }
+    }
 }
 
 pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
@@ -47,25 +103,25 @@ pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
 
     let arm9_has_footer = has_footer(&mut reader, header.arm9_rom_offset, header.arm9_size)?;
 
-    let fat_pos_sizes = read_fat(
+    let fat_locations = read_fat(
         &mut reader,
         header.fat_offset,
         header.fat_size,
         header.devicecap,
     )?;
-    let arm9_overlay_pos_sizes = overlay_pos_sizes(
+    let arm9_overlay_metadatas = get_overlay_metadatas(
         &mut reader,
         header.arm9_overlay_offset,
         header.arm9_overlay_size,
-        &fat_pos_sizes,
+        &fat_locations,
     )?;
-    let arm7_overlay_pos_sizes = overlay_pos_sizes(
+    let arm7_overlay_metadatas = get_overlay_metadatas(
         &mut reader,
         header.arm7_overlay_offset,
         header.arm7_overlay_size,
-        &fat_pos_sizes,
+        &fat_locations,
     )?;
-    let root_node = RomTreeNode::read_fnt(&mut reader, &fat_pos_sizes, header.fnt_offset)?;
+    let root_node = RomTreeNode::read_fnt(&mut reader, &fat_locations, header.fnt_offset)?;
 
     let is_dsi = (header.unitcode & 0x02) != 0;
     if is_dsi {
@@ -78,21 +134,19 @@ pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
         )?;
         let banner_size = dsi_fields.banner_size;
         let header_size: u32 = 0x1000;
-        let nds_rom_file = NdsRomFile {
+        let nds_rom_file = NdsRomFile::new(
             reader,
             header,
             arm9_has_footer,
             banner_size,
             header_size,
-            arm9_overlay_pos_sizes,
-            arm7_overlay_pos_sizes,
+            arm9_overlay_metadatas,
+            arm7_overlay_metadatas,
             root_node,
-        };
+        );
         let is_modcrypted = (header.dsi_flags & 0x2) != 0;
         let (key, iv1, iv2) = get_key_ivs(&header, &dsi_fields);
-        let decrypted_arm9i = None;
-        let decrypted_arm7i = None;
-        Ok(RomFile::Dsi(DsiRomFile {
+        Ok(RomFile::Dsi(DsiRomFile::new(
             nds_rom_file,
             dsi_fields,
             arm9i_has_footer,
@@ -100,9 +154,7 @@ pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
             key,
             iv1,
             iv2,
-            decrypted_arm9i,
-            decrypted_arm7i,
-        }))
+        )))
     } else {
         reader.seek(SeekFrom::Start(header.banner_offset.into()))?;
         let version = u16::read_le(&mut reader)?;
@@ -114,16 +166,16 @@ pub fn read_from_rom(mut reader: File) -> Result<RomFile> {
             _ => 0x840,
         };
         let header_size: u32 = 0x200;
-        let nds_rom_file = NdsRomFile {
+        let nds_rom_file = NdsRomFile::new(
             reader,
             header,
             arm9_has_footer,
             banner_size,
             header_size,
-            arm9_overlay_pos_sizes,
-            arm7_overlay_pos_sizes,
+            arm9_overlay_metadatas,
+            arm7_overlay_metadatas,
             root_node,
-        };
+        );
         Ok(RomFile::Nds(nds_rom_file))
     }
 }
@@ -139,9 +191,9 @@ fn read_fat(
     fat_offset: u32,
     fat_size: u32,
     devicecap: u8,
-) -> Result<Vec<(u32, u32)>> {
+) -> Result<Vec<RomFileLocation>> {
     reader.seek(SeekFrom::Start(fat_offset as u64))?;
-    let mut pos_sizes: Vec<(u32, u32)> = Vec::new();
+    let mut locations: Vec<RomFileLocation> = Vec::new();
     for file_id in (0..fat_size).step_by(0x8) {
         let top = u32::read_le(reader)?;
         let bottom = u32::read_le(reader)?;
@@ -156,23 +208,23 @@ fn read_fat(
             }
             .into());
         }
-        pos_sizes.push((top, size));
+        locations.push(RomFileLocation { pos: top, size });
     }
-    Ok(pos_sizes)
+    Ok(locations)
 }
 
-fn overlay_pos_sizes(
+fn get_overlay_metadatas(
     reader: &mut (impl Read + Seek),
     overlay_offset: u32,
     overlay_size: u32,
-    fat_pos_sizes: &[(u32, u32)],
-) -> Result<Vec<(u32, u32)>> {
+    fat_locations: &[RomFileLocation],
+) -> Result<Vec<(OverlayEntry, RomFileLocation)>> {
     reader.seek(SeekFrom::Start(overlay_offset as u64))?;
-    let mut pos_sizes: Vec<(u32, u32)> = Vec::new();
+    let mut locations: Vec<(OverlayEntry, RomFileLocation)> = Vec::new();
     for _ in (0..overlay_size).step_by(0x20) {
         let overlay_entry = OverlayEntry::read(reader)?;
         let file_id = overlay_entry.id;
-        pos_sizes.push(fat_pos_sizes[file_id as usize]);
+        locations.push((overlay_entry, fat_locations[file_id as usize]));
     }
-    Ok(pos_sizes)
+    Ok(locations)
 }

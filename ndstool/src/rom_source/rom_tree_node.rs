@@ -3,12 +3,12 @@ use std::io::{Read, Seek, SeekFrom};
 use binrw::BinRead;
 
 use crate::Result;
+use crate::rom_source::RomFileLocation;
 use crate::source::SourceTreeNode;
 
 pub struct RomTreeNode {
     name: String,
-    pos: u32,
-    size: u32,
+    location: RomFileLocation,
     children: Option<Vec<RomTreeNode>>,
 }
 
@@ -25,8 +25,8 @@ impl RomTreeNode {
         }
     }
 
-    pub fn pos_size(&self) -> (u32, u32) {
-        (self.pos, self.size)
+    pub fn location(&self) -> RomFileLocation {
+        self.location
     }
 
     pub fn find_node(&self, node_name: Option<&str>) -> Option<&RomTreeNode> {
@@ -55,15 +55,15 @@ impl RomTreeNode {
 
     pub fn read_fnt(
         reader: &mut (impl Read + Seek),
-        fat_pos_sizes: &[(u32, u32)],
+        fat_locations: &[RomFileLocation],
         fnt_offset: u32,
     ) -> Result<RomTreeNode> {
-        Self::read_fnt_dir(reader, fat_pos_sizes, fnt_offset, 0xF000, String::new())
+        Self::read_fnt_dir(reader, fat_locations, fnt_offset, 0xF000, String::new())
     }
 
     fn read_fnt_dir(
         reader: &mut (impl Read + Seek),
-        fat_pos_sizes: &[(u32, u32)],
+        fat_locations: &[RomFileLocation],
         fnt_offset: u32,
         dir_id: u16,
         name: String,
@@ -89,11 +89,10 @@ impl RomTreeNode {
             reader.read_exact(&mut child_name_buffer)?;
             let child_name = String::from_utf8(child_name_buffer)?;
             if is_file {
-                let (pos, size) = fat_pos_sizes[file_id as usize];
+                let location = fat_locations[file_id as usize];
                 let child_file = RomTreeNode {
                     name: child_name,
-                    pos,
-                    size,
+                    location,
                     children: None,
                 };
                 child_nodes.push(child_file);
@@ -102,7 +101,7 @@ impl RomTreeNode {
                 let save_pos = reader.stream_position()?;
                 let child_dir = Self::read_fnt_dir(
                     reader,
-                    fat_pos_sizes,
+                    fat_locations,
                     fnt_offset,
                     child_dir_id,
                     child_name,
@@ -113,8 +112,7 @@ impl RomTreeNode {
         }
         Ok(RomTreeNode {
             name,
-            pos: 0,
-            size: 0,
+            location: RomFileLocation { pos: 0, size: 0 },
             children: Some(child_nodes),
         })
     }

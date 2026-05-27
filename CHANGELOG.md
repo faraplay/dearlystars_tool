@@ -1,3 +1,18 @@
+## Version 0.4.0
+
+Add compression/decompression for executables (`arm9.bin` and overlays) in `.nds` files.
+
+Adds:
+
+- New commands `decompress-blz` and `compress-blz` to decompress/compress executable files.
+- New option `-d` for the `extract-nds` command, this automatically decompresses executable files when extracting.
+- New option `-c` for the `build-nds` command, this automatically compresses executable files when rebuilding.
+
+Fixes:
+
+- Fixed gld image injection for sprite formats 2 and 3.
+- Correct header size is now used for non-DSi roms when rebuilding.
+
 ## Version 0.3.1
 
 Changes:

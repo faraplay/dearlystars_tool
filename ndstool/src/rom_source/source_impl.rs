@@ -4,7 +4,8 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use crate::Result;
 use crate::error::NdsError;
 use crate::modcrypt::aes_ctr;
-use crate::rom_source::{DsiRomFile, NdsRomFile};
+use crate::overlay::OverlayEntry;
+use crate::rom_source::{DsiRomFile, NdsRomFile, RomFileLocation};
 use crate::source::{DsiSource, NdsSource, SourceTreeNode};
 
 impl NdsRomFile {
@@ -12,6 +13,9 @@ impl NdsRomFile {
         let reader = &mut self.reader;
         reader.seek(SeekFrom::Start(pos as u64))?;
         Ok(reader.take(size as u64))
+    }
+    fn open_location(&mut self, location: RomFileLocation) -> Result<std::io::Take<&mut File>> {
+        self.open_pos_size(location.pos, location.size)
     }
 }
 
@@ -47,31 +51,37 @@ impl NdsSource for NdsRomFile {
         )
     }
     fn arm9_overlay_count(&self) -> u16 {
-        self.arm9_overlay_pos_sizes.len() as u16
+        self.arm9_overlay_metadatas.len() as u16
+    }
+    fn arm9_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry {
+        &self.arm9_overlay_metadatas[overlay_index as usize].0
     }
     fn open_arm9_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek> {
-        let (pos, size) = self.arm9_overlay_pos_sizes[overlay_index as usize];
-        self.open_pos_size(pos, size)
+        let (_, location) = self.arm9_overlay_metadatas[overlay_index as usize];
+        self.open_location(location)
     }
     fn arm7_overlay_count(&self) -> u16 {
-        self.arm7_overlay_pos_sizes.len() as u16
+        self.arm7_overlay_metadatas.len() as u16
+    }
+    fn arm7_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry {
+        &self.arm7_overlay_metadatas[overlay_index as usize].0
     }
     fn open_arm7_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek> {
-        let (pos, size) = self.arm7_overlay_pos_sizes[overlay_index as usize];
-        self.open_pos_size(pos, size)
+        let (_, location) = self.arm7_overlay_metadatas[overlay_index as usize];
+        self.open_location(location)
     }
     fn root_node(&self) -> SourceTreeNode {
         self.root_node.to_source_tree_node()
     }
     fn open_file(&mut self, node_name: &str) -> Result<impl Read + Seek> {
-        let (pos, size) = self
+        let location = self
             .root_node
             .find_node(Some(node_name))
             .ok_or(NdsError {
                 message: String::from("Node not found!"),
             })?
-            .pos_size();
-        self.open_pos_size(pos, size)
+            .location();
+        self.open_location(location)
     }
 }
 

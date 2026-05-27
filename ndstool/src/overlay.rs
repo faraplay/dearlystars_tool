@@ -13,7 +13,15 @@ pub struct OverlayEntry {
     pub sinit_init: u32,
     pub sinit_init_end: u32,
     pub file_id: u32,
-    pub reserved: u32,
+    pub reserved_1c: u16,
+    pub reserved_1e: u8,
+    pub compression_flags: u8,
+}
+
+impl OverlayEntry {
+    pub fn is_compressed(&self) -> bool {
+        self.compression_flags & 0x01 != 0
+    }
 }
 
 pub fn format_overlay_string(overlay_id: u16) -> String {

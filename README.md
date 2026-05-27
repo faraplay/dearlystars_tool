@@ -12,7 +12,7 @@
 2. In this workspace directory, extract the game files from the original game rom by running
 
     ```
-    ./dearlystars extract-nds dearlystars.nds dearlystars_extracted
+    ./dearlystars extract-nds -d dearlystars.nds dearlystars_extracted
     ```
 
 3. Inject the text from the translation files into the extracted game files by running
@@ -40,7 +40,7 @@
 5. Build the translated game rom by running
 
     ```
-    ./dearlystars build-nds dearlystars_extracted dearlystars_translated.nds
+    ./dearlystars build-nds -c dearlystars_extracted dearlystars_translated.nds
     ```
 
 ## Acknowledgements

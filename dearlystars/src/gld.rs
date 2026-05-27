@@ -627,15 +627,17 @@ impl Gld {
             3 => 2,
             _ => panic!("Bad sprite format!"),
         };
-        let dest_row_size_bytes =
+        let dest_render_row_size_bytes =
+            render_width.next_multiple_of(pixels_per_byte) / pixels_per_byte;
+        let dest_crop_row_size_bytes =
             (image_width as usize).next_multiple_of(pixels_per_byte) / pixels_per_byte;
         for y in 0..entry.crop_height as usize {
             let src_start = y * image_width;
             let src_end = src_start + image_width;
             let dest_start = dest_image_data_start
-                + (y + entry.crop_y as usize) * render_width
+                + (y + entry.crop_y as usize) * dest_render_row_size_bytes
                 + entry.crop_x as usize;
-            let dest_end = dest_start + dest_row_size_bytes;
+            let dest_end = dest_start + dest_crop_row_size_bytes;
             let dest_last_byte = self.pixel_data[dest_end - 1];
             let dest = &mut self.pixel_data[dest_start..dest_end];
             match pixels_per_byte {

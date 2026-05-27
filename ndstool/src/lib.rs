@@ -1,3 +1,4 @@
+mod blz;
 mod digest;
 mod dir_source;
 mod error;
@@ -13,6 +14,7 @@ mod write_rom;
 
 pub use crate::error::Result;
 
+pub use crate::blz::{blz_compress, blz_decompress};
 pub use crate::dir_source::read_from_dir;
 pub use crate::rom_source::read_from_rom;
 pub use crate::write_file::write_to_dir;

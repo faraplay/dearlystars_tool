@@ -1,27 +1,30 @@
 use std::{
     fs::File,
-    io::{Read, Seek},
+    io::{Cursor, Read, Seek},
     path::{Path, PathBuf},
 };
 
-use crate::Result;
+use binrw::BinRead;
+
+use crate::{Result, blz_compress};
 use crate::{
     error::NdsError,
-    overlay::format_overlay_string,
+    overlay::{OverlayEntry, format_overlay_string},
     source::{DsiSource, NdsSource, Source, SourceTreeNode},
 };
 
 pub struct NdsDsiDirSource {
     base_path: PathBuf,
-    arm9_overlay_count: u16,
-    arm7_overlay_count: u16,
+    arm9_overlay_entries: Vec<OverlayEntry>,
+    arm7_overlay_entries: Vec<OverlayEntry>,
     root_node: SourceTreeNode,
+    executables_are_decompressed: bool,
 }
 
 type DirSource = Source<NdsDsiDirSource, NdsDsiDirSource>;
 
-pub fn read_from_dir(path: impl AsRef<Path>) -> Result<DirSource> {
-    let mut source = NdsDsiDirSource::read_path(path.as_ref())?;
+pub fn read_from_dir(path: impl AsRef<Path>, compress: bool) -> Result<DirSource> {
+    let mut source = NdsDsiDirSource::read_path(path.as_ref(), compress)?;
     let mut header_reader = source.open_header()?;
     let size = header_reader.seek(std::io::SeekFrom::End(0))?;
     drop(header_reader);
@@ -38,24 +41,42 @@ impl NdsDsiDirSource {
         Ok(File::open(&combined_path)?)
     }
 
-    fn read_path(path: &Path) -> Result<NdsDsiDirSource> {
+    fn open_path_maybe_compress(
+        &self,
+        path: &str,
+        compress: bool,
+        min_uncompressed_region_size: usize,
+    ) -> Result<Cursor<Vec<u8>>> {
+        let mut buffer = Vec::new();
+        self.open_path(path)?.read_to_end(&mut buffer)?;
+
+        if compress {
+            let compressed_data = blz_compress(&buffer, min_uncompressed_region_size)?;
+            Ok(Cursor::new(compressed_data))
+        } else {
+            Ok(Cursor::new(buffer))
+        }
+    }
+
+    fn read_path(path: &Path, compress: bool) -> Result<NdsDsiDirSource> {
         let base_path = PathBuf::from(path);
-        let arm9_overlay_count = get_overlay_count(&base_path, "arm9_overlay_table.bin")?;
-        let arm7_overlay_count = get_overlay_count(&base_path, "arm7_overlay_table.bin")?;
+        let arm9_overlay_entries = get_overlay_entries(&base_path, "arm9_overlay_table.bin")?;
+        let arm7_overlay_entries = get_overlay_entries(&base_path, "arm7_overlay_table.bin")?;
         let data_path: PathBuf = [&base_path, Path::new("data")].iter().collect();
         let root_node = read_path_into_node(&data_path)?;
         Ok(NdsDsiDirSource {
             base_path,
-            arm9_overlay_count,
-            arm7_overlay_count,
+            arm9_overlay_entries,
+            arm7_overlay_entries,
             root_node,
+            executables_are_decompressed: compress,
         })
     }
 }
 
 impl NdsSource for NdsDsiDirSource {
     fn open_arm9(&mut self) -> Result<impl Read + Seek> {
-        self.open_path("arm9.bin")
+        self.open_path_maybe_compress("arm9.bin", self.executables_are_decompressed, 0x4000)
     }
     fn open_arm7(&mut self) -> Result<impl Read + Seek> {
         self.open_path("arm7.bin")
@@ -76,18 +97,29 @@ impl NdsSource for NdsDsiDirSource {
         self.open_path("arm7_overlay_table.bin")
     }
     fn arm9_overlay_count(&self) -> u16 {
-        self.arm9_overlay_count
+        self.arm9_overlay_entries.len() as u16
+    }
+    fn arm9_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry {
+        &self.arm9_overlay_entries[overlay_index as usize]
     }
     fn open_arm9_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek> {
-        self.open_path(&format!("overlay/{}", format_overlay_string(overlay_index)))
+        let overlay_entry = self.arm9_overlay_metadata(overlay_index);
+        self.open_path_maybe_compress(
+            &format!("overlay/{}", format_overlay_string(overlay_index)),
+            self.executables_are_decompressed && overlay_entry.is_compressed(),
+            0,
+        )
     }
     fn arm7_overlay_count(&self) -> u16 {
-        self.arm7_overlay_count
+        self.arm7_overlay_entries.len() as u16
+    }
+    fn arm7_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry {
+        &self.arm7_overlay_entries[overlay_index as usize]
     }
     fn open_arm7_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek> {
         self.open_path(&format!(
             "overlay/{}",
-            format_overlay_string(self.arm9_overlay_count + overlay_index)
+            format_overlay_string(self.arm9_overlay_count() + overlay_index)
         ))
     }
     fn root_node(&self) -> SourceTreeNode {
@@ -110,13 +142,22 @@ impl DsiSource for NdsDsiDirSource {
     }
 }
 
-fn get_overlay_count(base_path: &Path, overlay_table_file_name: &str) -> Result<u16> {
+fn get_overlay_entries(
+    base_path: &Path,
+    overlay_table_file_name: &str,
+) -> Result<Vec<OverlayEntry>> {
     let overlay_path: PathBuf = [base_path, Path::new(overlay_table_file_name)]
         .iter()
         .collect();
     let mut reader = File::open(overlay_path)?;
     let size = reader.seek(std::io::SeekFrom::End(0))?;
-    Ok((size / 0x20) as u16)
+
+    reader.seek(std::io::SeekFrom::Start(0))?;
+    let mut overlay_entries = Vec::new();
+    for _ in (0..size).step_by(0x20) {
+        overlay_entries.push(OverlayEntry::read_le(&mut reader)?);
+    }
+    Ok(overlay_entries)
 }
 
 fn file_name(path: &Path) -> Result<String> {
