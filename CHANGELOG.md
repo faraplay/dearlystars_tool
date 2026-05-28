@@ -1,3 +1,11 @@
+## Version 0.4.1
+
+Changes:
+
+- More accurate `blz` compression algorithm.
+- Arm9 and overlay executable sizes are now written to the `.nds` rom in more places, meaning that rebuilt `.nds` roms with edited executables can boot.
+- Removed the `-d` and `-c` options from the `extract-nds` and `build-nds` commands, the program now always automatically decompresses/compresses executable files.
+
 ## Version 0.4.0
 
 Add compression/decompression for executables (`arm9.bin` and overlays) in `.nds` files.

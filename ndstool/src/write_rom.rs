@@ -2,12 +2,14 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 use binrw::{BinRead, BinWrite};
 
-use crate::Result;
 use crate::digest::sha1_hmac;
+use crate::error::NdsError;
 use crate::key_encryption::{decrypt_arm9, encrypt_arm9};
 use crate::modcrypt::modcrypt;
+use crate::overlay::write_overlay_table;
 use crate::rom_source::RomFileLocation;
 use crate::util::{pad_n, pad_to_alignment, pad_to_position};
+use crate::{Result, blz_compress};
 use crate::{
     header::{DsHeader, DsiExtraFields},
     source::{DsiSource, NdsSource, Source, SourceTreeNode},
@@ -177,13 +179,31 @@ fn write_arm9(
                 (value1, value2) => (value1, value2),
             };
 
-        let mut arm9_reader = source.open_arm9()?;
+        let mut arm9_decompressed = Vec::new();
+        source.open_arm9()?.read_to_end(&mut arm9_decompressed)?;
+
+        // check for footer
+        let footer = if arm9_decompressed[arm9_decompressed.len() - 12..arm9_decompressed.len() - 8]
+            == [0x21, 0x06, 0xC0, 0xDE]
+        {
+            arm9_decompressed.split_off(arm9_decompressed.len() - 12)
+        } else {
+            Vec::new()
+        };
+
+        let mut arm9_compressed = blz_compress(&arm9_decompressed, 0x4000)?.ok_or(NdsError {
+            message: "arm9.bin could not be compressed to a smaller size!".to_string(),
+        })?;
+
+        // write mem address of end of compressed arm9 to 0x0FC4 in arm9
+        let compressed_size = arm9_compressed.len() as u32;
+        arm9_compressed[0x0FC4..0x0FC8]
+            .copy_from_slice(&(0x02004000 + compressed_size).to_le_bytes());
 
         // add dummy area for secure syscalls
         header.arm9_size = 0;
         if b_secure_syscalls {
-            let x = u32::read_le(&mut arm9_reader)?;
-            arm9_reader.seek(SeekFrom::Start(0))?;
+            let x = u32::from_le_bytes(arm9_compressed[..4].try_into().unwrap());
             if x != 0xE7FFDEFF {
                 for _ in (0..0x800).step_by(4) {
                     0xE7FFDEFFu32.write_le(writer)?;
@@ -192,10 +212,11 @@ fn write_arm9(
             }
         }
 
-        let size = copy_get_size_without_footer(&mut arm9_reader, writer)?;
+        writer.write_all(&arm9_compressed)?;
+        writer.write_all(&footer)?;
         header.arm9_entry_address = entry_address;
         header.arm9_ram_address = ram_address;
-        header.arm9_size += size.next_multiple_of(4);
+        header.arm9_size += compressed_size.next_multiple_of(4);
 
         if header.rom_header_size > 0x200
             && (entry_address - ram_address) == 0x800
@@ -212,21 +233,59 @@ fn write_arm9(
     // encrypt the secure area (if arm9 is decrypted)
     encrypt_secure_area(writer, header)?;
 
-    // ARM9 overlay table
+    // reserve space for ARM9 overlay table
+    let arm9_overlay_count = source.arm9_overlay_metadata().len();
     header.arm9_overlay_offset = pad_to_alignment(writer, FILE_ALIGNMENT, 0xFF)?;
-    let size = std::io::copy(&mut source.open_arm9_overlay_table()?, writer)? as u32;
-    header.arm9_overlay_size = size;
-    let arm9_overlay_files = (size / 0x20) as u16;
-    if size == 0 {
+    if arm9_overlay_count == 0 {
         header.arm9_overlay_offset = 0;
     }
+    let arm9_overlay_table_size = arm9_overlay_count * 0x20;
+    writer.write_all(&vec![0u8; arm9_overlay_table_size])?;
+    header.arm9_overlay_size = arm9_overlay_table_size as u32;
 
     // manually added ARM9 overlay files. each file is padded with 0xFF's
+    let mut arm9_overlay_entries: Vec<_> = source.arm9_overlay_metadata().cloned().collect();
     let mut arm9_overlay_locations = Vec::<RomFileLocation>::new();
-    for overlay_index in 0..arm9_overlay_files {
-        let location = add_file(&mut source.open_arm9_overlay(overlay_index)?, writer)?;
+    for overlay_entry in &mut arm9_overlay_entries {
+        assert_eq!(
+            overlay_entry.id as usize,
+            arm9_overlay_locations.len(),
+            "Arm9 overlay entry ids are not in sequential order!"
+        );
+
+        let mut decompressed_overlay = Vec::new();
+        source
+            .open_overlay(&overlay_entry)?
+            .read_to_end(&mut decompressed_overlay)?;
+
+        overlay_entry.ram_size = decompressed_overlay
+            .len()
+            .try_into()
+            .map_err(|_| NdsError {
+                message: "Overlay is too large!".to_string(),
+            })?;
+        let location = if let Some(compressed_overlay) = blz_compress(&decompressed_overlay, 0)? {
+            let compressed_size = compressed_overlay.len();
+            if compressed_size > 0x00FFFFFF {
+                return Err(NdsError {
+                    message: "Compressed overlay is too large!".to_string(),
+                }
+                .into());
+            }
+            overlay_entry.compressed_size_flag = 0x03000000 | compressed_size as u32;
+            add_file(&mut compressed_overlay.as_slice(), writer)?
+        } else {
+            overlay_entry.compressed_size_flag = 0x02000000;
+            add_file(&mut decompressed_overlay.as_slice(), writer)?
+        };
         arm9_overlay_locations.push(location);
     }
+
+    // go back and write ARM9 overlay table
+    let save_pos = writer.seek(SeekFrom::Current(0))?;
+    writer.seek(SeekFrom::Start(header.arm9_overlay_offset as u64))?;
+    write_overlay_table(&arm9_overlay_entries, writer)?;
+    writer.seek(SeekFrom::Start(save_pos))?;
 
     Ok(arm9_overlay_locations)
 }
@@ -257,23 +316,28 @@ fn write_arm7(
         header.arm7_size = size.next_multiple_of(4);
     }
 
-    // ARM7 overlay table
-    header.arm7_overlay_offset = pad_to_alignment(writer, ARM7_ALIGNMENT, 0xFF)?;
-    let size = std::io::copy(&mut source.open_arm7_overlay_table()?, writer)? as u32;
-    header.arm7_overlay_size = size;
-    let arm7_overlay_files = (size / 0x20) as u16;
-    if size == 0 {
+    // reserve space for ARM7 overlay table
+    let arm7_overlay_count = source.arm7_overlay_metadata().len();
+    header.arm7_overlay_offset = pad_to_alignment(writer, FILE_ALIGNMENT, 0xFF)?;
+    if arm7_overlay_count == 0 {
         header.arm7_overlay_offset = 0;
     }
 
     // manually added ARM7 overlay files, just like for ARM9
-    let mut arm7_overlay_location = Vec::<RomFileLocation>::new();
-    for overlay_index in 0..arm7_overlay_files {
-        let location = add_file(&mut source.open_arm7_overlay(overlay_index)?, writer)?;
-        arm7_overlay_location.push(location);
+    let mut arm7_overlay_entries: Vec<_> = source.arm7_overlay_metadata().cloned().collect();
+    let mut arm7_overlay_locations = Vec::<RomFileLocation>::new();
+    for overlay_entry in &mut arm7_overlay_entries {
+        let location = add_file(&mut source.open_overlay(&overlay_entry)?, writer)?;
+        arm7_overlay_locations.push(location);
     }
 
-    Ok(arm7_overlay_location)
+    // go back and write ARM7 overlay table
+    let save_pos = writer.seek(SeekFrom::Current(0))?;
+    writer.seek(SeekFrom::Start(header.arm7_overlay_offset as u64))?;
+    write_overlay_table(&arm7_overlay_entries, writer)?;
+    writer.seek(SeekFrom::Start(save_pos))?;
+
+    Ok(arm7_overlay_locations)
 }
 
 fn write_filesystem(
@@ -534,25 +598,7 @@ fn set_file_size(writer: &mut (impl Read + Write + Seek), header: &mut DsHeader)
     Ok(())
 }
 
-fn copy_get_size_without_footer(
-    reader: &mut (impl Read + Seek),
-    writer: &mut (impl Write + Seek),
-) -> Result<u32> {
-    let size = std::io::copy(reader, writer)? as u32;
-    reader.seek(SeekFrom::End(-3 * 4))?;
-    let nitrocode: u32 = u32::read_le(reader)?;
-    let size_without_footer = if nitrocode == 0xDEC00621 {
-        size - 3 * 4
-    } else {
-        size
-    };
-    Ok(size_without_footer)
-}
-
-fn add_file(
-    reader: &mut (impl Read + Seek),
-    writer: &mut (impl Write + Seek),
-) -> Result<RomFileLocation> {
+fn add_file(reader: &mut impl Read, writer: &mut (impl Write + Seek)) -> Result<RomFileLocation> {
     let pos: u32 = pad_to_alignment(writer, FILE_ALIGNMENT, 0xFF)?;
     let size: u32 = std::io::copy(reader, writer)? as u32;
     Ok(RomFileLocation { pos, size })

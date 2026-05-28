@@ -1,12 +1,12 @@
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-use crate::Result;
 use crate::error::NdsError;
 use crate::modcrypt::aes_ctr;
 use crate::overlay::OverlayEntry;
 use crate::rom_source::{DsiRomFile, NdsRomFile, RomFileLocation};
 use crate::source::{DsiSource, NdsSource, SourceTreeNode};
+use crate::{Result, blz_decompress};
 
 impl NdsRomFile {
     fn open_pos_size(&mut self, pos: u32, size: u32) -> Result<std::io::Take<&mut File>> {
@@ -21,10 +21,16 @@ impl NdsRomFile {
 
 impl NdsSource for NdsRomFile {
     fn open_arm9(&mut self) -> Result<impl Read + Seek> {
-        self.open_pos_size(
-            self.header.arm9_rom_offset,
-            self.header.arm9_size + if self.arm9_has_footer { 0xC } else { 0 },
-        )
+        let mut compressed_arm9 = Vec::new();
+        self.open_pos_size(self.header.arm9_rom_offset, self.header.arm9_size)?
+            .read_to_end(&mut compressed_arm9)?;
+        let mut decompressed_arm9 = blz_decompress(&compressed_arm9)?;
+
+        if self.arm9_has_footer {
+            self.open_pos_size(self.header.arm9_rom_offset + self.header.arm9_size, 0xC)?
+                .read_to_end(&mut decompressed_arm9)?;
+        }
+        Ok(Cursor::new(decompressed_arm9))
     }
     fn open_arm7(&mut self) -> Result<impl Read + Seek> {
         self.open_pos_size(self.header.arm7_rom_offset, self.header.arm7_size)
@@ -38,37 +44,33 @@ impl NdsSource for NdsRomFile {
     fn open_logo(&mut self) -> Result<impl Read + Seek> {
         self.open_pos_size(0xC0, 0x9C)
     }
-    fn open_arm9_overlay_table(&mut self) -> Result<impl Read + Seek> {
-        self.open_pos_size(
-            self.header.arm9_overlay_offset,
-            self.header.arm9_overlay_size,
-        )
+    fn arm9_overlay_metadata(&self) -> impl ExactSizeIterator<Item = &OverlayEntry> {
+        self.arm9_overlay_metadatas
+            .iter()
+            .map(|(overlay_entry, _)| overlay_entry)
     }
-    fn open_arm7_overlay_table(&mut self) -> Result<impl Read + Seek> {
-        self.open_pos_size(
-            self.header.arm7_overlay_offset,
-            self.header.arm7_overlay_size,
-        )
+    fn arm7_overlay_metadata(&self) -> impl ExactSizeIterator<Item = &OverlayEntry> {
+        self.arm7_overlay_metadatas
+            .iter()
+            .map(|(overlay_entry, _)| overlay_entry)
     }
-    fn arm9_overlay_count(&self) -> u16 {
-        self.arm9_overlay_metadatas.len() as u16
-    }
-    fn arm9_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry {
-        &self.arm9_overlay_metadatas[overlay_index as usize].0
-    }
-    fn open_arm9_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek> {
-        let (_, location) = self.arm9_overlay_metadatas[overlay_index as usize];
-        self.open_location(location)
-    }
-    fn arm7_overlay_count(&self) -> u16 {
-        self.arm7_overlay_metadatas.len() as u16
-    }
-    fn arm7_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry {
-        &self.arm7_overlay_metadatas[overlay_index as usize].0
-    }
-    fn open_arm7_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek> {
-        let (_, location) = self.arm7_overlay_metadatas[overlay_index as usize];
-        self.open_location(location)
+    fn open_overlay(&mut self, overlay_entry: &OverlayEntry) -> Result<impl Read + Seek> {
+        let overlay_index = overlay_entry.id;
+        let arm9_overlay_count = self.arm9_overlay_metadatas.len() as u32;
+        let location = if overlay_index < arm9_overlay_count {
+            self.arm9_overlay_metadatas[overlay_index as usize].1
+        } else {
+            self.arm7_overlay_metadatas[(overlay_index - arm9_overlay_count) as usize].1
+        };
+
+        let mut overlay_data = Vec::new();
+        self.open_location(location)?
+            .read_to_end(&mut overlay_data)?;
+        if overlay_entry.is_compressed() {
+            Ok(Cursor::new(blz_decompress(&overlay_data)?))
+        } else {
+            Ok(Cursor::new(overlay_data))
+        }
     }
     fn root_node(&self) -> SourceTreeNode {
         self.root_node.to_source_tree_node()

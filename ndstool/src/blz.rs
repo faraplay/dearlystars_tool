@@ -69,7 +69,7 @@ fn backwards_match_length(test_slice: &[u8], my_slice: &[u8]) -> usize {
 pub fn blz_compress(
     decompressed_bytes: &[u8],
     min_uncompressed_region_size: usize,
-) -> Result<Vec<u8>> {
+) -> Result<Option<Vec<u8>>> {
     let decompressed_size = decompressed_bytes.len();
 
     if decompressed_size < min_uncompressed_region_size {
@@ -86,11 +86,10 @@ pub fn blz_compress(
     let mut flags_count = 0;
     let mut mini_buffer = Vec::<u8>::with_capacity(16);
 
+    // list of every new best total size, along with the amount of uncompressed bytes
+    // when the new record was made
     let mut best_total_size: usize = decompressed_size;
-    let mut best_position: usize = 0;
-    let mut best_out_buffer_len: usize = 0;
-    let mut best_flags_byte: u8 = 0;
-    let mut best_mini_buffer: Vec<u8> = Vec::new();
+    let mut best_total_sizes_list: Vec<(usize, usize)> = Vec::new();
 
     while position > min_uncompressed_region_size {
         if flags_count == 8 {
@@ -142,34 +141,43 @@ pub fn blz_compress(
         // if this is the new smallest then save what everything looks like at this point
         if total_size < best_total_size {
             best_total_size = total_size;
-            best_position = position;
-            best_out_buffer_len = compress_buffer.len();
-            best_flags_byte = flags << (8 - flags_count);
-            best_mini_buffer = mini_buffer.clone();
+            best_total_sizes_list.push((position, total_size));
         }
     }
 
-    if best_total_size == decompressed_size {
-        return Err(std::io::Error::other(
-            "Could not find any position where total size is smaller!",
-        )
-        .into());
+    compress_buffer.push(flags << (8 - flags_count));
+    compress_buffer.append(&mut mini_buffer);
+
+    let total_size = min_uncompressed_region_size + compress_buffer.len();
+    let better_position;
+    let better_total_size;
+    if total_size > best_total_size {
+        // if compressing all the data does not give the best total size,
+        // then use the *first* position on the list that has a strictly better total size.
+        // For some reason we don't just use the best total size possible.
+        (better_position, better_total_size) = *best_total_sizes_list
+            .iter()
+            .find(|(_, better_total_size)| *better_total_size < total_size)
+            .unwrap();
+        compress_buffer.truncate(better_total_size - better_position);
+    } else {
+        better_position = min_uncompressed_region_size;
+        better_total_size = total_size;
     }
 
-    compress_buffer.truncate(best_out_buffer_len);
-    compress_buffer.push(best_flags_byte);
-    compress_buffer.append(&mut best_mini_buffer);
+    if better_total_size.next_multiple_of(4) + 8 >= decompressed_size {
+        // file cannot be compressed to a smaller size
+        return Ok(None);
+    }
 
     compress_buffer.reverse();
-    let decompressed_plus_compressed_size = best_position + compress_buffer.len();
-    let pad_byte_count =
-        decompressed_plus_compressed_size.next_multiple_of(4) - decompressed_plus_compressed_size;
+    let pad_byte_count = better_total_size.next_multiple_of(4) - better_total_size;
     compress_buffer.extend(std::iter::repeat_n(0xFF, pad_byte_count));
 
     let header_size = pad_byte_count + 8;
     let compressed_and_header_size = compress_buffer.len() + 8;
 
-    let mut out_buffer = decompressed_bytes[..best_position].to_vec();
+    let mut out_buffer = decompressed_bytes[..better_position].to_vec();
     out_buffer.append(&mut compress_buffer);
     let extend_size = decompressed_size - (out_buffer.len() + 8);
 
@@ -191,5 +199,5 @@ pub fn blz_compress(
     out_buffer.push(((extend_size >> 16) & 0xFF) as u8);
     out_buffer.push(((extend_size >> 24) & 0xFF) as u8);
 
-    Ok(out_buffer)
+    Ok(Some(out_buffer))
 }

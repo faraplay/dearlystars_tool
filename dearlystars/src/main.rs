@@ -59,10 +59,6 @@ enum Commands {
         in_nds_file: PathBuf,
         /// The output directory.
         out_directory: PathBuf,
-        /// If this flag is supplied, the arm9 executable and overlays will be
-        /// automatically decompressed.
-        #[arg(short = 'd')]
-        decompress: bool,
     },
     /// Rebuild a .nds rom from a previously extracted folder.
     BuildNds {
@@ -70,11 +66,6 @@ enum Commands {
         in_directory: PathBuf,
         /// The name of the file to output.
         out_nds_file: PathBuf,
-        /// If this flag is supplied, the arm9 executable and overlays will be
-        /// automatically compressed. Use this if you decompressed the executable
-        /// and overlays when extracting.
-        #[arg(short = 'c')]
-        compress: bool,
     },
     /// Extract files from a .bin and .idx file.
     ExtractBin {
@@ -166,8 +157,10 @@ fn main() {
             min_uncompressed_region_size,
         } => {
             let in_data = std::fs::read(in_bin_file).expect("Error reading input bin file!");
-            let compressed_data = ndstool::blz_compress(&in_data, *min_uncompressed_region_size)
-                .expect("Error compressing bin file!");
+            let compressed_option_data =
+                ndstool::blz_compress(&in_data, *min_uncompressed_region_size)
+                    .expect("Error compressing bin file!");
+            let compressed_data = compressed_option_data.expect("Tried to compress file, but the result was larger than the original file! Aborting.");
             std::fs::write(out_bin_file, &compressed_data)
                 .expect("Error writing data to output file!");
             println!("Compressed file.")
@@ -175,21 +168,18 @@ fn main() {
         Commands::ExtractNds {
             in_nds_file,
             out_directory,
-            decompress,
         } => {
             let nds_reader = File::open(&in_nds_file).expect("Error opening nds file!");
             let mut nds_source = read_from_rom(nds_reader).expect("Error processing nds file!");
-            write_to_dir(&mut nds_source, out_directory, *decompress)
-                .expect("Error extracting data to dir!");
+            write_to_dir(&mut nds_source, out_directory).expect("Error extracting data to dir!");
             eprintln!("Extracted nds rom file.");
         }
         Commands::BuildNds {
             in_directory,
             out_nds_file,
-            compress,
         } => {
             let mut dir_source =
-                read_from_dir(in_directory, *compress).expect("Error reading data from directory!");
+                read_from_dir(in_directory).expect("Error reading data from directory!");
             let mut nds_writer = File::options()
                 .read(true)
                 .write(true)

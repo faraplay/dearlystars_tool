@@ -15,14 +15,9 @@ pub trait NdsSource {
     fn open_banner(&mut self) -> Result<impl Read + Seek>;
     fn open_header(&mut self) -> Result<impl Read + Seek>;
     fn open_logo(&mut self) -> Result<impl Read + Seek>;
-    fn open_arm9_overlay_table(&mut self) -> Result<impl Read + Seek>;
-    fn open_arm7_overlay_table(&mut self) -> Result<impl Read + Seek>;
-    fn arm9_overlay_count(&self) -> u16;
-    fn arm9_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry;
-    fn open_arm9_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek>;
-    fn arm7_overlay_count(&self) -> u16;
-    fn arm7_overlay_metadata(&self, overlay_index: u16) -> &OverlayEntry;
-    fn open_arm7_overlay(&mut self, overlay_index: u16) -> Result<impl Read + Seek>;
+    fn arm9_overlay_metadata(&self) -> impl ExactSizeIterator<Item = &OverlayEntry>;
+    fn arm7_overlay_metadata(&self) -> impl ExactSizeIterator<Item = &OverlayEntry>;
+    fn open_overlay(&mut self, overlay_entry: &OverlayEntry) -> Result<impl Read + Seek>;
     fn root_node(&self) -> SourceTreeNode;
     fn open_file(&mut self, file_name: &str) -> Result<impl Read + Seek>;
 }
