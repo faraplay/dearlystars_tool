@@ -1,6 +1,7 @@
 use crate::util::{Error, Result};
 use encoding_rs::SHIFT_JIS;
 use nom::Parser;
+use std::collections::HashMap;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Seek;
@@ -69,12 +70,6 @@ fn apply_translation(
 /// * `in_dir`       - directory containing 'arm9.bin' and the 'overlay' folder
 /// * `in_csv_dir`   - directory containing CSV translation files
 pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
-    // in_dir     - Directory Containing the Arm9 and Overlay Files (dearlystars_extracted)
-    // in_csv_dir - Directory where CSV is (translated_csv)
-
-    //Variables
-    let mut row: usize = 1; //start index for traversing rows of CSV file
-
     let mut blanks: String = String::new(); //create a string of 0x00 (NUL) character to make substrings out of
     blanks.push(0u8 as char);
     blanks = blanks.repeat(300); //300 should be enough (largest is 208)
@@ -90,115 +85,39 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
     //csv_data is entire CSV in memory now
     //accessed by: csv_data[row][col]
 
-    // --- Arm 9 ---
+    // Sort CSV rows into different buckets by filename
 
-    //open arm9
-    let mut arm_path = in_dir.clone();
-    arm_path.push("arm9.bin"); //path becomes: dearlystars_extracted/arm9.bin
-    let mut file = OpenOptions::new().read(true).write(true).open(&arm_path)?;
-
-    while row < 99 {
-        //loop for Arm9
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
+    // Initialise a hashmap of the buckets
+    // Each bucket is a vector of references to CSV rows
+    let mut csv_rows_by_filename: HashMap<&str, Vec<&Vec<String>>> = HashMap::new();
+    // Make sure to skip the heading row of the csv
+    for row in csv_data.iter().skip(1) {
+        // filename is in column C of the row
+        let filename = row[2].as_str();
+        // get a mutable ref to the bucket under this filename
+        // if there is no bucket under this filename, we add a default object
+        // (i.e. an empty vector) to the HashMap under this filename
+        let bucket = csv_rows_by_filename.entry(filename).or_default();
+        // add the row to the bucket
+        bucket.push(row);
     }
 
-    // --- Overlay9 0002 ---
-    let mut overlay_path = in_dir.clone();
-    overlay_path.push("overlay/overlay9_0002.bin"); //path becomes: dearlystars_extracted/overlay/overlay9_0002.bin
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&overlay_path)?;
+    // now we perform string injection for each filename
+    for (filename, bucket) in csv_rows_by_filename {
+        // get path to file
+        let file_path = if filename.starts_with("overlay") {
+            // file is in the overlay folder if the filename starts with "overlay"
+            in_dir.join("overlay").join(filename)
+        } else {
+            in_dir.join(filename)
+        };
+        eprintln!("Injecting into {}", file_path.display());
+        let mut file = OpenOptions::new().read(true).write(true).open(&file_path)?;
 
-    while row < 166 {
-        //loop for Overlay9 0002
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
-    }
-
-    // --- Overlay9 0003 ---
-    let mut overlay_path = in_dir.clone();
-    overlay_path.push("overlay/overlay9_0003.bin"); //path becomes: dearlystars_extracted/overlay/overlay9_0003.bin
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&overlay_path)?;
-
-    while row < 279 {
-        //loop for Overlay9 0003
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
-    }
-
-    // --- Overlay9 0004 ---
-    let mut overlay_path = in_dir.clone();
-    overlay_path.push("overlay/overlay9_0004.bin"); //path becomes: dearlystars_extracted/overlay/overlay9_0004.bin
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&overlay_path)?;
-
-    while row < 321 {
-        //loop for Overlay9 0004
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
-    }
-
-    // --- Overlay9 0005 ---
-    let mut overlay_path = in_dir.clone();
-    overlay_path.push("overlay/overlay9_0005.bin"); //path becomes: dearlystars_extracted/overlay/overlay9_0005.bin
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&overlay_path)?;
-
-    while row < 349 {
-        //loop for Overlay9 0005
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
-    }
-
-    // --- Overlay9 0008 ---
-    let mut overlay_path = in_dir.clone();
-    overlay_path.push("overlay/overlay9_0008.bin"); //path becomes: dearlystars_extracted/overlay/overlay9_0008.bin
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&overlay_path)?;
-
-    while row < 359 {
-        //loop for Overlay9 0008
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
-    }
-
-    // --- Overlay9 0009 ---
-    let mut overlay_path = in_dir.clone();
-    overlay_path.push("overlay/overlay9_0009.bin"); //path becomes: dearlystars_extracted/overlay/overlay9_0009.bin
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&overlay_path)?;
-
-    while row < 394 {
-        //loop for Overlay9 0009
-
-        apply_translation(&mut file, &csv_data, row, &blanks)?;
-
-        row = row + 1; //increment
+        // inject every row in the bucket into the file
+        for row in 0..bucket.len() {
+            apply_translation(&mut file, &bucket, row, &blanks)?;
+        }
     }
 
     return Ok(());
