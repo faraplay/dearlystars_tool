@@ -137,12 +137,13 @@ enum Commands {
         #[arg(short = 'p')]
         preview_dir: Option<PathBuf>,
     },
-
-    Arm9Overlay {
+    /// Inject strings from a csv file into the arm9.bin and overlay files of an extracted .nds rom.
+    /// Note that this overwrites the arm9.bin and overlay files.
+    InjectExecStrings {
+        /// The input .csv file.
+        in_csv_file: PathBuf,
         /// Directory Containing the Arm9 and Overlay Files (dearlystars_extracted)
-        in_dir: PathBuf,
-        /// Directory where CSV is (translated_csv)
-        in_csv_dir: PathBuf,
+        extracted_nds_dir: PathBuf,
     },
 }
 
@@ -278,12 +279,13 @@ fn main() {
                 .expect("Error injecting pictures into gld files!");
             eprintln!("Injected pictures into gld files.");
         }
-
-        Commands::Arm9Overlay { in_dir, in_csv_dir } => {
-            arm9overlay::arm9overlay(in_dir, in_csv_dir)
-                .expect("Error injecting into ARM9 or Overlay Files!");
-
-            eprintln!("Injected into Arm9 and Overlay files.")
+        Commands::InjectExecStrings {
+            in_csv_file,
+            extracted_nds_dir,
+        } => {
+            arm9overlay::inject_exec_strings(in_csv_file, extracted_nds_dir)
+                .expect("Error injecting strings into arm9 and overlay files!");
+            eprintln!("Injected strings into arm9 and overlay files.")
         }
     }
 }

@@ -10,12 +10,13 @@ use std::path::PathBuf;
 
 use crate::csv::parse_csv;
 
-/// Apply translations to text within files containing executable code
+/// Inject a translated string into a file containing executable code
 ///
 /// Arguments:
-/// * `file`     - binary file being written to (class type File)
-/// * `row`      - one row of the CSV containing translation, offset within file, and max byte length
-fn apply_translation(mut file: &File, row: &Vec<String>) -> Result<()> {
+/// * `file`     - binary file being written to
+/// * `row`      - one row of the CSV containing the translated string,
+///                offset within file, and max byte length
+fn inject_string(mut file: &File, row: &Vec<String>) -> Result<()> {
     //grab data from CSV
     let translation_str = &row[1]; // grab Translated_Text (column B)
     if translation_str.is_empty() {
@@ -69,18 +70,15 @@ fn apply_translation(mut file: &File, row: &Vec<String>) -> Result<()> {
     return Ok(());
 }
 
-/// Implement the command called from main.rs to apply translations to text within
-///          files containing executable code
+/// Inject translated strings from a csv file into a folder of game files
+/// containing executable code
 ///
 /// Arguments:
-/// * `in_dir`       - directory containing 'arm9.bin' and the 'overlay' folder
-/// * `in_csv_dir`   - directory containing CSV translation files
-pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
-    //Open CSV for Parsing
-    let mut csv_path = in_csv_dir.clone();
-    csv_path.push("ENGLISH_IMASDS_Arm9&Overlays_Translation.xlsx - ARM9Overlay_Text.csv"); //path becomes: translated_csv/filename
-
-    let csv_data_str = std::fs::read_to_string(&csv_path)?;
+/// * `in_csv_path`             - path of CSV file containing strings to be inserted, filenames, offsets etc
+/// * `extracted_nds_dir`       - path of folder containing extracted nds rom with executable files to patch
+pub fn inject_exec_strings(in_csv_path: &PathBuf, extracted_nds_dir: &PathBuf) -> Result<()> {
+    // Open CSV for Parsing
+    let csv_data_str = std::fs::read_to_string(&in_csv_path)?;
     let (_, csv_data) = parse_csv
         .parse_complete(&csv_data_str)
         .map_err(|err| Error::CsvParseError(err.to_owned().into()))?;
@@ -109,9 +107,9 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
         // get path to file
         let file_path = if filename.starts_with("overlay") {
             // file is in the overlay folder if the filename starts with "overlay"
-            in_dir.join("overlay").join(filename)
+            extracted_nds_dir.join("overlay").join(filename)
         } else {
-            in_dir.join(filename)
+            extracted_nds_dir.join(filename)
         };
         eprintln!("Injecting into {}", file_path.display());
         let mut file = OpenOptions::new().read(true).write(true).open(&file_path)?;
@@ -119,7 +117,7 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
         // inject every row in the bucket into the file
         for row in bucket {
             // try to apply translation, see whether it returns Ok or Err
-            match apply_translation(&mut file, row) {
+            match inject_string(&mut file, row) {
                 // if Ok, we don't need to do anything
                 Ok(_) => {}
                 // if it's a data error in the spreadsheet row, print a warning and carry on
