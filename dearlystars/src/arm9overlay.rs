@@ -18,9 +18,10 @@ use crate::csv::parse_csv;
 /// * `row`      - counting variable passed in to determine the Row for accessing csv_data
 fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -> Result<()> {
     //grab data from CSV
-    let mut translation_str: &str = csv_data[row][1].as_str(); //grab TL Text
+    let translation_str = &csv_data[row][1]; //grab TL Text
     if translation_str.is_empty() {
-        translation_str = "---"; //if empty (imcomplete CSV? Put 3 hyphens)
+        // skip string injection if there is no translation
+        return Ok(());
     }
 
     let mut hex_offset_str: &str = csv_data[row][3].as_str(); //grab Offset in File
@@ -36,13 +37,22 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
     //convert strings to SHIFT_JIS Vectors
     let mut tl_bytes: Vec<u8> = SHIFT_JIS.encode(&translation_str).0.into();
 
-    //cap translated string
-    while tl_bytes.len() >= clear_bytes.len() {
-        tl_bytes.pop(); //pop last character off
-    }
-    //loop runs until tl_bytes is at least 1 byte smaller than clear_bytes (wont run if smaller than clear_bytes)
-    //the last byte will become 0x00
+    // add NUL terminator byte
     tl_bytes.push(0);
+
+    // if translated string is too long, abort string injection and print warning message
+    if tl_bytes.len() > max_bytes {
+        eprintln!("Translated string");
+        eprintln!("{translation_str}");
+        eprintln!("is too long to inject into position {offset:#X}!");
+        eprintln!(
+            "Translated string length is {}, max length is {}",
+            tl_bytes.len() - 1,
+            max_bytes
+        );
+        eprintln!();
+        return Ok(());
+    }
 
     //seek to location in file and WRITE the clear bytes
     file.seek(std::io::SeekFrom::Start(offset))?; //move file reader to this byte
