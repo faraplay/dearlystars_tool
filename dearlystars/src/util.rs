@@ -11,6 +11,7 @@ pub enum Error {
     CsvParseError(Box<dyn std::error::Error>),
     PngEncodingError(png::EncodingError),
     PngDecodingError(png::DecodingError),
+    StringInjectionDataError(String),
     Other(Box<dyn std::error::Error>),
 }
 
@@ -27,6 +28,7 @@ impl std::fmt::Display for Error {
             Error::CsvParseError(e) => e.fmt(f),
             Error::PngEncodingError(e) => e.fmt(f),
             Error::PngDecodingError(e) => e.fmt(f),
+            Error::StringInjectionDataError(e) => e.fmt(f),
             Error::Other(e) => e.fmt(f),
         }
     }

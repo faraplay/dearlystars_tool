@@ -24,12 +24,21 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
         return Ok(());
     }
 
-    let mut hex_offset_str: &str = csv_data[row][3].as_str(); //grab Offset in File
-    hex_offset_str = hex_offset_str.trim_start_matches("0x");
-    let offset: u64 = u64::from_str_radix(hex_offset_str, 16).unwrap();
+    let hex_offset_str = &csv_data[row][3]; //grab Offset in File
+    // try to parse the string as a hexadecimal integer
+    let Ok(offset) = u64::from_str_radix(hex_offset_str.trim_start_matches("0x"), 16) else {
+        return Err(Error::StringInjectionDataError(format!(
+            "Could not parse {hex_offset_str} as a hexadecimal integer!"
+        )));
+    };
 
-    let length_str: &str = csv_data[row][4].as_str(); //grab Max Bytes
-    let max_bytes: usize = u32::from_str_radix(length_str, 10).unwrap() as usize;
+    let length_str = &csv_data[row][4]; //grab Max Bytes
+    // try to parse the string as an integer
+    let Ok(max_bytes) = length_str.parse::<usize>() else {
+        return Err(Error::StringInjectionDataError(format!(
+            "Could not parse {length_str} as an integer!"
+        )));
+    };
 
     //make a string of NUL (0x00)
     let clear_bytes: Vec<u8> = vec![0; max_bytes];
@@ -42,16 +51,13 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
 
     // if translated string is too long, abort string injection and print warning message
     if tl_bytes.len() > max_bytes {
-        eprintln!("Translated string");
-        eprintln!("{translation_str}");
-        eprintln!("is too long to inject into position {offset:#X}!");
-        eprintln!(
-            "Translated string length is {}, max length is {}",
-            tl_bytes.len() - 1,
-            max_bytes
-        );
-        eprintln!();
-        return Ok(());
+        return Err(Error::StringInjectionDataError(format!(
+            "Translated string\n\
+            {translation_str}\n\
+            is too long to inject into position {offset:#X}!\n\
+            Translated string length is {}, max length is {max_bytes}",
+            tl_bytes.len() - 1
+        )));
     }
 
     //seek to location in file and WRITE the clear bytes
@@ -114,7 +120,17 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
 
         // inject every row in the bucket into the file
         for row in 0..bucket.len() {
-            apply_translation(&mut file, &bucket, row)?;
+            // try to apply translation, see whether it returns Ok or Err
+            match apply_translation(&mut file, &bucket, row) {
+                // if Ok, we don't need to do anything
+                Ok(_) => {}
+                // if it's a data error in the spreadsheet row, print a warning and carry on
+                Err(Error::StringInjectionDataError(message)) => {
+                    eprintln!("Error injecting row:\n{message}\nSkipping row...\n");
+                }
+                // if it's another error (e.g. file IO error), stop and pass on the error
+                Err(e) => return Err(e),
+            }
         }
     }
 
