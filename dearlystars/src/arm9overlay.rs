@@ -40,13 +40,9 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
         )));
     };
 
-    //make a string of NUL (0x00)
-    let clear_bytes: Vec<u8> = vec![0; max_bytes];
-
-    //convert strings to SHIFT_JIS Vectors
+    // convert the translated string to a vector of bytes using the SHIFT_JIS encoding
     let mut tl_bytes: Vec<u8> = SHIFT_JIS.encode(&translation_str).0.into();
-
-    // add NUL terminator byte
+    // add a NUL terminator byte
     tl_bytes.push(0);
 
     // if translated string is too long, abort string injection and print warning message
@@ -60,9 +56,9 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
         )));
     }
 
-    //seek to location in file and WRITE the clear bytes
+    //seek to location in file and WRITE a bunch of NUL bytes to clear out the space
     file.seek(std::io::SeekFrom::Start(offset))?; //move file reader to this byte
-    file.write_all(&clear_bytes)?;
+    file.write_all(&vec![0; max_bytes])?;
 
     //seek to location in file and WRITE the Translated Bytes
     file.seek(std::io::SeekFrom::Start(offset))?; //move file reader to this byte
