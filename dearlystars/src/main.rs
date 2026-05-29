@@ -15,6 +15,7 @@ use crate::ez::read_idx;
 use crate::ez::rebuild_bin;
 use crate::util::mkdir;
 
+mod arm9overlay;
 mod bbq;
 mod csv;
 mod ez;
@@ -135,6 +136,14 @@ enum Commands {
         /// (Optional) The output directory to contain previews of the recolored images.
         #[arg(short = 'p')]
         preview_dir: Option<PathBuf>,
+    },
+    /// Inject strings from a csv file into the arm9.bin and overlay files of an extracted .nds rom.
+    /// Note that this overwrites the arm9.bin and overlay files.
+    InjectExecStrings {
+        /// The input .csv file.
+        in_csv_file: PathBuf,
+        /// Directory Containing the Arm9 and Overlay Files (dearlystars_extracted)
+        extracted_nds_dir: PathBuf,
     },
 }
 
@@ -269,6 +278,14 @@ fn main() {
             gld::inject_glds(in_png_dir, gld_dir, preview_dir.as_deref())
                 .expect("Error injecting pictures into gld files!");
             eprintln!("Injected pictures into gld files.");
+        }
+        Commands::InjectExecStrings {
+            in_csv_file,
+            extracted_nds_dir,
+        } => {
+            arm9overlay::inject_exec_strings(in_csv_file, extracted_nds_dir)
+                .expect("Error injecting strings into arm9 and overlay files!");
+            eprintln!("Injected strings into arm9 and overlay files.")
         }
     }
 }

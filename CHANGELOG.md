@@ -1,3 +1,11 @@
+## Version 0.5.0
+
+Add string injection into executables (`arm9.bin` and overlays).
+
+Adds:
+
+- New command `inject-exec-strings` to inject strings into game executable files.
+
 ## Version 0.4.1
 
 Changes:
