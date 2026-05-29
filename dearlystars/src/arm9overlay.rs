@@ -16,14 +16,7 @@ use crate::csv::parse_csv;
 /// * `file`     - binary file being written to (class type File)
 /// * `csv_data` - data from CSV containing translation, offset within file, and max byte length
 /// * `row`      - counting variable passed in to determine the Row for accessing csv_data
-/// * `blanks`   - string of NUL (0x00) chars that a substring is made from, which is used to fill
-///                        the spot where the translation is placed
-fn apply_translation(
-    mut file: &File,
-    csv_data: &Vec<Vec<String>>,
-    row: usize,
-    blanks: &String,
-) -> Result<()> {
+fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -> Result<()> {
     //grab data from CSV
     let mut translation_str: &str = csv_data[row][1].as_str(); //grab TL Text
     if translation_str.is_empty() {
@@ -38,11 +31,10 @@ fn apply_translation(
     let max_bytes: usize = u32::from_str_radix(length_str, 10).unwrap() as usize;
 
     //make a string of NUL (0x00)
-    let clear_str: &str = &blanks[..max_bytes];
+    let clear_bytes: Vec<u8> = vec![0; max_bytes];
 
     //convert strings to SHIFT_JIS Vectors
     let mut tl_bytes: Vec<u8> = SHIFT_JIS.encode(&translation_str).0.into();
-    let clear_bytes: Vec<u8> = SHIFT_JIS.encode(&clear_str).0.into();
 
     //cap translated string
     while tl_bytes.len() >= clear_bytes.len() {
@@ -70,16 +62,12 @@ fn apply_translation(
 /// * `in_dir`       - directory containing 'arm9.bin' and the 'overlay' folder
 /// * `in_csv_dir`   - directory containing CSV translation files
 pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
-    let mut blanks: String = String::new(); //create a string of 0x00 (NUL) character to make substrings out of
-    blanks.push(0u8 as char);
-    blanks = blanks.repeat(300); //300 should be enough (largest is 208)
-
     //Open CSV for Parsing
     let mut csv_path = in_csv_dir.clone();
     csv_path.push("ENGLISH_IMASDS_Arm9&Overlays_Translation.xlsx - ARM9Overlay_Text.csv"); //path becomes: translated_csv/filename
 
     let csv_data_str = std::fs::read_to_string(&csv_path)?;
-    let (_, csv_data): (_, Vec<Vec<String>>) = parse_csv
+    let (_, csv_data) = parse_csv
         .parse_complete(&csv_data_str)
         .map_err(|err| Error::CsvParseError(err.to_owned().into()))?;
     //csv_data is entire CSV in memory now
@@ -116,7 +104,7 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
 
         // inject every row in the bucket into the file
         for row in 0..bucket.len() {
-            apply_translation(&mut file, &bucket, row, &blanks)?;
+            apply_translation(&mut file, &bucket, row)?;
         }
     }
 
