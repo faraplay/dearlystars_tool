@@ -17,17 +17,17 @@ use crate::csv::parse_csv;
 /// * `row`      - one row of the CSV containing translation, offset within file, and max byte length
 fn apply_translation(mut file: &File, row: &Vec<String>) -> Result<()> {
     //grab data from CSV
-    let translation_str = &row[1]; // grab TL Text (column B)
+    let translation_str = &row[1]; // grab Translated_Text (column B)
     if translation_str.is_empty() {
         // skip string injection if there is no translation
         return Ok(());
     }
 
-    let hex_offset_str = &row[3]; // grab Offset in File (column D)
+    let hex_offset_str = &row[3]; // grab Text_Offset in File (column D)
     // try to parse the string as a hexadecimal integer
     let Ok(offset) = u64::from_str_radix(hex_offset_str.trim_start_matches("0x"), 16) else {
         return Err(Error::StringInjectionDataError(format!(
-            "Could not parse {hex_offset_str} as a hexadecimal integer!"
+            "Could not parse the Text_Offset field {hex_offset_str} as a hexadecimal integer!"
         )));
     };
 
@@ -35,25 +35,28 @@ fn apply_translation(mut file: &File, row: &Vec<String>) -> Result<()> {
     // try to parse the string as an integer
     let Ok(max_bytes) = length_str.parse::<usize>() else {
         return Err(Error::StringInjectionDataError(format!(
-            "Could not parse {length_str} as an integer!"
+            "Could not parse the Max Bytes field {length_str} as an integer!"
         )));
     };
 
     // convert the translated string to a vector of bytes using the SHIFT_JIS encoding
     let mut tl_bytes: Vec<u8> = SHIFT_JIS.encode(&translation_str).0.into();
-    // add a NUL terminator byte
-    tl_bytes.push(0);
 
     // if translated string is too long, abort string injection and print warning message
-    if tl_bytes.len() > max_bytes {
+    // remember that we need 1 extra byte of space for the NUL terminator byte
+    if tl_bytes.len() + 1 > max_bytes {
         return Err(Error::StringInjectionDataError(format!(
-            "Translated string\n\
+            "The Translated_Text field\n\
             {translation_str}\n\
-            is too long to inject into position {offset:#X}!\n\
-            Translated string length is {}, max length is {max_bytes}",
-            tl_bytes.len() - 1
+            is too long to inject into position {offset:#X}! \
+            Translated string length (not including NUL terminator byte) \
+            is {} bytes, available space is {max_bytes} bytes",
+            tl_bytes.len()
         )));
     }
+
+    // add a NUL terminator byte
+    tl_bytes.push(0);
 
     //seek to location in file and WRITE a bunch of NUL bytes to clear out the space
     file.seek(std::io::SeekFrom::Start(offset))?; //move file reader to this byte
@@ -121,7 +124,7 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
                 Ok(_) => {}
                 // if it's a data error in the spreadsheet row, print a warning and carry on
                 Err(Error::StringInjectionDataError(message)) => {
-                    eprintln!("Error injecting row:\n{message}\nSkipping row...\n");
+                    eprintln!("Error injecting row! Reason:\n{message}\nSkipping this row...\n");
                 }
                 // if it's another error (e.g. file IO error), stop and pass on the error
                 Err(e) => return Err(e),
