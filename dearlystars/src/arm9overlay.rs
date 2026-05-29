@@ -10,21 +10,20 @@ use std::path::PathBuf;
 
 use crate::csv::parse_csv;
 
-/// Apply translations to text within files containing executible code
+/// Apply translations to text within files containing executable code
 ///
 /// Arguments:
 /// * `file`     - binary file being written to (class type File)
-/// * `csv_data` - data from CSV containing translation, offset within file, and max byte length
-/// * `row`      - counting variable passed in to determine the Row for accessing csv_data
-fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -> Result<()> {
+/// * `row`      - one row of the CSV containing translation, offset within file, and max byte length
+fn apply_translation(mut file: &File, row: &Vec<String>) -> Result<()> {
     //grab data from CSV
-    let translation_str = &csv_data[row][1]; //grab TL Text
+    let translation_str = &row[1]; // grab TL Text (column B)
     if translation_str.is_empty() {
         // skip string injection if there is no translation
         return Ok(());
     }
 
-    let hex_offset_str = &csv_data[row][3]; //grab Offset in File
+    let hex_offset_str = &row[3]; // grab Offset in File (column D)
     // try to parse the string as a hexadecimal integer
     let Ok(offset) = u64::from_str_radix(hex_offset_str.trim_start_matches("0x"), 16) else {
         return Err(Error::StringInjectionDataError(format!(
@@ -32,7 +31,7 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
         )));
     };
 
-    let length_str = &csv_data[row][4]; //grab Max Bytes
+    let length_str = &row[4]; // grab Max Bytes (column E)
     // try to parse the string as an integer
     let Ok(max_bytes) = length_str.parse::<usize>() else {
         return Err(Error::StringInjectionDataError(format!(
@@ -68,7 +67,7 @@ fn apply_translation(mut file: &File, csv_data: &Vec<Vec<String>>, row: usize) -
 }
 
 /// Implement the command called from main.rs to apply translations to text within
-///          files containing executible code
+///          files containing executable code
 ///
 /// Arguments:
 /// * `in_dir`       - directory containing 'arm9.bin' and the 'overlay' folder
@@ -115,9 +114,9 @@ pub fn arm9overlay(in_dir: &PathBuf, in_csv_dir: &PathBuf) -> Result<()> {
         let mut file = OpenOptions::new().read(true).write(true).open(&file_path)?;
 
         // inject every row in the bucket into the file
-        for row in 0..bucket.len() {
+        for row in bucket {
             // try to apply translation, see whether it returns Ok or Err
-            match apply_translation(&mut file, &bucket, row) {
+            match apply_translation(&mut file, row) {
                 // if Ok, we don't need to do anything
                 Ok(_) => {}
                 // if it's a data error in the spreadsheet row, print a warning and carry on
