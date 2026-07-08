@@ -30,7 +30,7 @@
 
     ```
     ./dearlystars extract-bin -b dearlystars_extracted/data/F_AGL.BIN -i dearlystars_extracted/data/F_AGL.IDX F_AGL
-    ./dearlystars inject-gld-images translated_png F_AGL -p injected_preview
+    ./dearlystars inject-gld-images translated_png F_AGL/AGL -p injected_preview
     ./dearlystars build-bin F_AGL -b dearlystars_extracted/data/F_AGL.BIN -i dearlystars_extracted/data/F_AGL.IDX
     ```
 
