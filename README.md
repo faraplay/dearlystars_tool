@@ -64,4 +64,6 @@
 Code for the `ndstool` module is heavily based on [the `ndstool` program](https://github.com/devkitPro/ndstool)
 and the very detailed documentation [GBATEK](https://problemkaputt.de/gbatek.htm).
 
+Details of the GLD image format were figured out by **HARMAp**
+
 Code for executable string injection (in `dearlystars/src/arm9overlay.rs`) was written by **airkingneo** (though some edits have since been made).

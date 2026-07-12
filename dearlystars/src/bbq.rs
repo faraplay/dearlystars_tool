@@ -173,6 +173,40 @@ impl Bbq {
         }
         Some(script_lines)
     }
+    pub fn get_mail(&self) -> Option<(String, String)> {
+        let type5data = match self.type5data.as_ref()?.as_slice() {
+            [a] => a,
+            _ => return None,
+        };
+        let indices = type5data
+            .bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| u32::from_le_bytes(*chunk))
+            .collect::<Vec<_>>();
+        eprintln!("{indices:?}");
+        let mail_indices1 = &indices[1..1 + indices[0] as usize];
+        let mail_indices2 = &indices[32..32 + indices[31] as usize];
+        eprintln!("{mail_indices1:?}, {mail_indices2:?}");
+        let strings: Vec<&str> = self
+            .type7data
+            .as_ref()?
+            .iter()
+            .map(|a| a.text.as_str())
+            .collect();
+        let mail1 = mail_indices1
+            .iter()
+            .map(|index| strings[*index as usize])
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mail2 = mail_indices2
+            .iter()
+            .map(|index| strings[*index as usize])
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some((mail1, mail2))
+    }
     fn inject_strings(&self, strings: Vec<String>) -> Bbq {
         Bbq {
             datetime: self.datetime,
@@ -239,6 +273,62 @@ impl Bbq {
             footer: self.footer,
         }
     }
+    fn inject_mail(&self, mail1: String, mail2: String) -> Bbq {
+        let mut strings = vec!["".to_string()];
+        let mut type5_bytes = Vec::new();
+        let mut mail_lines1 = mail1.split("\n").collect::<Vec<_>>();
+        let mut mail_lines2 = mail2.split("\n").collect::<Vec<_>>();
+        let mut lines1_count = mail_lines1.len() as u32;
+        let mut lines2_count = mail_lines2.len() as u32;
+        if lines1_count > 30 {
+            eprintln!("More than 30 lines in mail!");
+            lines1_count = 30;
+        }
+        if lines2_count > 30 {
+            eprintln!("More than 30 lines in reply!");
+            lines2_count = 30;
+        }
+
+        type5_bytes.extend(lines1_count.to_le_bytes());
+        mail_lines1.resize(30, "");
+        for line in mail_lines1 {
+            if sj_len(line) > 32 {
+                eprintln!(
+                    "Warning! Line\n{}\nis over the character limit of 32!",
+                    line
+                );
+            }
+            let text_id = get_index(&mut strings, line.to_string()) as u32;
+            type5_bytes.extend(text_id.to_le_bytes());
+        }
+
+        type5_bytes.extend(lines2_count.to_le_bytes());
+        mail_lines2.resize(30, "");
+        for line in mail_lines2 {
+            if sj_len(line) > 32 {
+                eprintln!(
+                    "Warning! Line\n{}\nis over the character limit of 32!",
+                    line
+                );
+            }
+            let text_id = get_index(&mut strings, line.to_string()) as u32;
+            type5_bytes.extend(text_id.to_le_bytes());
+        }
+
+        Bbq {
+            datetime: self.datetime,
+            type2data: Some(vec![Type2Data {
+                data: [0, 65536, 0, 1, 248, 1, 0],
+            }]),
+            type3data: None,
+            type5data: Some(vec![Type5Data { bytes: type5_bytes }]),
+            type6data: Some(vec![Type6Data {
+                commands: Vec::new(),
+            }]),
+            type7data: Some(strings.into_iter().map(|text| Type7Data { text }).collect()),
+            footer: self.footer,
+        }
+    }
 }
 
 fn sj_len(text: &str) -> usize {
@@ -265,15 +355,14 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
     eprintln!("Extracting bbqs from {bbq_dir_basename}.");
     let out_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}.csv"))?;
     let out_mes_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}_MES.csv"))?;
+    let out_ml_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}_ML.csv"))?;
     let out_csv_path = out_dir.join(&out_csv_name);
     let out_mes_csv_path = out_dir.join(&out_mes_csv_name);
-    let mut csv_writer = std::fs::File::create(&out_csv_path)?;
-    let mut mes_csv_writer = std::fs::File::create(&out_mes_csv_path)?;
-    writeln!(
-        mes_csv_writer,
-        "Filename,Speaker id,Audio flag,Audio id,Speaker text,Line text"
-    )?;
-    writeln!(csv_writer, "Filename,Text",)?;
+    let out_ml_csv_path = out_dir.join(&out_ml_csv_name);
+    let mut csv_lazy = None;
+    let mut mes_csv_lazy = None;
+    let mut ml_csv_lazy = None;
+
     for result in std::fs::read_dir(bbq_dir)? {
         let dir_entry = result?;
         let file_type = dir_entry.file_type()?;
@@ -299,11 +388,49 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
                     let lines = bbq.get_script_lines().ok_or(std::io::Error::other(
                         "Error getting script lines from bbq!",
                     ))?;
+                    if mes_csv_lazy.is_none() {
+                        let mut mes_csv_writer = std::fs::File::create(&out_mes_csv_path)?;
+                        writeln!(
+                            mes_csv_writer,
+                            "Filename,Speaker id,Audio flag,Audio id,Speaker text,Line text"
+                        )?;
+                        mes_csv_lazy = Some(mes_csv_writer);
+                    }
+                    let mut mes_csv_writer = mes_csv_lazy.as_ref().unwrap();
                     for line in lines {
                         writeln!(mes_csv_writer, "{},{}", filename, line.to_csv_string())?;
                     }
+                } else if let Some((_, filename_no_index)) = filename.split_at_checked(5)
+                    && filename_no_index.starts_with("ML_")
+                {
+                    eprintln!("Mail {filename}");
+                    let (mail1, mail2) = bbq
+                        .get_mail()
+                        .ok_or(std::io::Error::other("Error getting mail from bbq!"))?;
+                    if ml_csv_lazy.is_none() {
+                        let mut ml_csv_writer = std::fs::File::create(&out_ml_csv_path)?;
+                        writeln!(
+                            ml_csv_writer,
+                            "Filename,Mail,Translated Mail,Reply,Translated Reply"
+                        )?;
+                        ml_csv_lazy = Some(ml_csv_writer);
+                    }
+                    let mut ml_csv_writer = ml_csv_lazy.as_ref().unwrap();
+                    writeln!(
+                        ml_csv_writer,
+                        "{},\"{}\",,\"{}\",",
+                        filename,
+                        mail1.replace("\"", "\"\""),
+                        mail2.replace("\"", "\"\""),
+                    )?;
                 } else {
                     if let Some(strings) = bbq.get_strings() {
+                        if csv_lazy.is_none() {
+                            let mut csv_writer = std::fs::File::create(&out_csv_path)?;
+                            writeln!(csv_writer, "Filename,Text",)?;
+                            csv_lazy = Some(csv_writer);
+                        }
+                        let mut csv_writer = csv_lazy.as_ref().unwrap();
                         for line in strings {
                             writeln!(
                                 csv_writer,
@@ -361,6 +488,30 @@ fn row_to_message(row: Vec<String>) -> Option<(String, (String, String))> {
     ))
 }
 
+fn row_to_mail(row: Vec<String>) -> Option<(String, (String, String))> {
+    let mut row_iter = row.into_iter();
+    let filename = row_iter.next()?;
+    let mail_text = row_iter.next().unwrap_or_default();
+    let mail_replace_text = row_iter.next().unwrap_or_default();
+    let reply_text = row_iter.next().unwrap_or_default();
+    let reply_replace_text = row_iter.next().unwrap_or_default();
+    Some((
+        filename,
+        (
+            if !mail_replace_text.is_empty() {
+                mail_replace_text
+            } else {
+                mail_text
+            },
+            if !reply_replace_text.is_empty() {
+                reply_replace_text
+            } else {
+                reply_text
+            },
+        ),
+    ))
+}
+
 fn get_strings_from_csv<T>(
     in_csv_path: &Path,
     row_to_t: &dyn Fn(Vec<String>) -> Option<(String, T)>,
@@ -383,6 +534,7 @@ fn inject_bbq(
     bbq_path: &Path,
     file_text_dict: &mut Option<HashMap<String, Vec<String>>>,
     file_messages_dict: &mut Option<HashMap<String, Vec<(String, String)>>>,
+    file_mails_dict: &mut Option<HashMap<String, Vec<(String, String)>>>,
 ) -> Result<()> {
     let filename = bbq_path
         .file_name()
@@ -425,6 +577,24 @@ fn inject_bbq(
             script_line.line_text = replace_line;
         }
         bbq.inject_script_lines(script_lines)
+    } else if let Some((_, filename_no_index)) = filename.split_at_checked(5)
+        && filename_no_index.starts_with("ML_")
+    {
+        let mails_dict = match file_mails_dict {
+            Some(a) => a,
+            None => return Ok(()),
+        };
+        eprintln!("Injecting file {filename}");
+        let mut mail_row = mails_dict
+            .remove(filename)
+            .ok_or(std::io::Error::other("Filename not found in csv!"))?;
+        if mail_row.len() != 1 {
+            return Err(
+                std::io::Error::other("Number of mail lines for file in csv is not 1!").into(),
+            );
+        }
+        let (mail1, mail2) = mail_row.remove(0);
+        bbq.inject_mail(mail1, mail2)
     } else {
         let text_dict = match file_text_dict {
             Some(a) => a,
@@ -464,8 +634,9 @@ pub fn inject_text(in_csv_dir: &Path, bbq_dir: &Path) -> Result<()> {
         .ok_or(std::io::Error::other("Error getting directory base name!"))?;
     let in_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}.csv"))?;
     let in_mes_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}_MES.csv"))?;
-    let in_csv_path = in_csv_dir.join(&in_csv_name);
+    let in_ml_csv_name = PathBuf::from_str(&format!("{bbq_dir_basename}_ML.csv"))?;
 
+    let in_csv_path = in_csv_dir.join(&in_csv_name);
     let mut file_text_dict = if std::fs::exists(&in_csv_path).unwrap_or(false) {
         let dict = get_strings_from_csv(&in_csv_path, &row_to_text).ok();
         if dict.is_none() {
@@ -486,7 +657,7 @@ pub fn inject_text(in_csv_dir: &Path, bbq_dir: &Path) -> Result<()> {
     };
 
     let in_mes_csv_path = in_csv_dir.join(&in_mes_csv_name);
-    let mut file_messages_dict = if std::fs::exists(&in_csv_path).unwrap_or(false) {
+    let mut file_messages_dict = if std::fs::exists(&in_mes_csv_path).unwrap_or(false) {
         let dict = get_strings_from_csv(&in_mes_csv_path, &row_to_message).ok();
         if dict.is_none() {
             eprintln!(
@@ -498,8 +669,28 @@ pub fn inject_text(in_csv_dir: &Path, bbq_dir: &Path) -> Result<()> {
         dict
     } else {
         eprintln!(
-            "Csv file {} not found, skipping injection for bbq files in {}...",
+            "Csv file {} not found, skipping injection for message bbq files in {}...",
             in_mes_csv_name.display(),
+            bbq_dir.display()
+        );
+        None
+    };
+
+    let in_ml_csv_path = in_csv_dir.join(&in_ml_csv_name);
+    let mut file_mails_dict = if std::fs::exists(&in_ml_csv_path).unwrap_or(false) {
+        let dict = get_strings_from_csv(&in_ml_csv_path, &row_to_mail).ok();
+        if dict.is_none() {
+            eprintln!(
+                "Error reading csv file {}, skipping injection for mail bbq files in {}...",
+                in_ml_csv_name.display(),
+                bbq_dir.display()
+            );
+        }
+        dict
+    } else {
+        eprintln!(
+            "Csv file {} not found, skipping injection for mail bbq files in {}...",
+            in_ml_csv_name.display(),
             bbq_dir.display()
         );
         None
@@ -512,7 +703,12 @@ pub fn inject_text(in_csv_dir: &Path, bbq_dir: &Path) -> Result<()> {
             inject_text(in_csv_dir, &dir_entry.path())?;
         } else if file_type.is_file() {
             let bbq_path = dir_entry.path();
-            inject_bbq(&bbq_path, &mut file_text_dict, &mut file_messages_dict)?;
+            inject_bbq(
+                &bbq_path,
+                &mut file_text_dict,
+                &mut file_messages_dict,
+                &mut file_mails_dict,
+            )?;
         }
     }
     Ok(())

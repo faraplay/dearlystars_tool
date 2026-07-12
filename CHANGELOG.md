@@ -1,3 +1,11 @@
+## Version 0.5.2
+
+Add code for mail extraction and injection.
+
+Changes:
+
+- BBQs containing mail data are now handled separately during text extraction/injection.
+
 ## Version 0.5.1
 
 Fix program to handle BBQ files from `F_TBL` in the game files.
