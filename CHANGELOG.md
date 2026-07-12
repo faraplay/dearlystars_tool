@@ -1,3 +1,11 @@
+## Version 0.5.1
+
+Fix program to handle BBQ files from `F_TBL` in the game files.
+
+Changes:
+
+- More versatile BBQ file parsing that supports more BBQ files
+
 ## Version 0.5.0
 
 Add string injection into executables (`arm9.bin` and overlays).

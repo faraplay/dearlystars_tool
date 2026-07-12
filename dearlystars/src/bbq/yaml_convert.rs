@@ -69,54 +69,26 @@ impl YamlConvert for Type3Data {
 
 impl YamlConvert for Type5Data {
     fn yaml_lines(&self) -> Vec<String> {
-        if let Some(data) = &self.small_data {
-            vec![format!("{data}")]
-        } else {
-            let mut lines = vec!["lines:".to_string()];
-            for child in &self.lines {
-                lines.push(format!(
-                    "- [{}, {}, {}, {}, {}, {}]",
-                    child.0, child.1, child.2, child.3, child.4, child.5
-                ));
-            }
-            lines
-        }
+        std::iter::once("bytes:".to_string())
+            .chain(self.bytes.iter().map(|byte| format!("- {}", byte)))
+            .collect()
     }
     fn from_yaml_lines(lines: &[&str], indent: usize) -> Result<Type5Data> {
-        if lines.len() == 1 {
-            Ok(Type5Data {
-                small_data: Some(lines[0][indent..].parse().or(Err(yaml_error(
-                    "Type 5 small data could not be parsed as an integer!",
-                )))?),
-                lines: Vec::new(),
-            })
-        } else {
-            if &lines[0][indent..] != "lines:" {
-                return Err(yaml_error("Type 5 first field is not labelled lines!"));
-            }
-
-            let mut children = Vec::new();
-            for line in &lines[1..] {
-                let array = line[indent..]
-                    .strip_prefix("- ")
-                    .ok_or(yaml_error("Type 5 lines item does not start with - !"))?;
-                let child: [u32; 6] = from_array_string(array)?
-                    .try_into()
-                    .or(Err(yaml_error("Type 5 line does not have 6 elements!")))?;
-                children.push((
-                    child[0] as u8,
-                    child[1] as u8,
-                    child[2] as u16,
-                    child[3],
-                    child[4],
-                    child[5],
-                ));
-            }
-            Ok(Type5Data {
-                small_data: None,
-                lines: children,
-            })
+        if &lines[0][indent..] != "bytes:" {
+            return Err(yaml_error("Type 5 first field is not labelled bytes!"));
         }
+
+        let mut bytes = Vec::new();
+        for line in &lines[1..] {
+            let byte = line[indent..]
+                .strip_prefix("- ")
+                .ok_or(yaml_error("Type 5 bytes item does not start with - !"))?;
+            bytes.push(
+                byte.parse::<u8>()
+                    .or(Err(yaml_error("Type 5 item could not be parsed as byte!")))?,
+            );
+        }
+        Ok(Type5Data { bytes })
     }
 }
 

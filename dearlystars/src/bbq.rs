@@ -78,8 +78,7 @@ impl BbqDataType for Type3Data {}
 
 #[derive(Debug, PartialEq, Clone)]
 struct Type5Data {
-    small_data: Option<u32>,
-    lines: Vec<(u8, u8, u16, u32, u32, u32)>,
+    bytes: Vec<u8>,
 }
 impl BbqDataType for Type5Data {}
 
@@ -141,6 +140,16 @@ impl Bbq {
             [a] => a,
             _ => return None,
         };
+        let lines = type5data.bytes.as_chunks::<16>().0.iter().map(|chunk| {
+            (
+                chunk[0],
+                chunk[1],
+                u16::from_le_bytes([chunk[2], chunk[3]]),
+                u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+                u32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]),
+                u32::from_le_bytes([chunk[12], chunk[13], chunk[14], chunk[15]]),
+            )
+        });
         let strings: Vec<&str> = self
             .type7data
             .as_ref()?
@@ -149,16 +158,16 @@ impl Bbq {
             .collect();
         let mut script_lines = Vec::new();
         for (speaker_id, audio_flag, audio_id, speaker_text_id, line_text1_id, line_text2_id) in
-            &type5data.lines
+            lines
         {
             script_lines.push(ScriptLine {
-                speaker_id: *speaker_id,
-                audio_flag: *audio_flag,
-                audio_id: *audio_id,
-                speaker_text: strings[*speaker_text_id as usize].to_string(),
+                speaker_id: speaker_id,
+                audio_flag: audio_flag,
+                audio_id: audio_id,
+                speaker_text: strings[speaker_text_id as usize].to_string(),
                 line_text: format!(
                     "{}\n{}",
-                    strings[*line_text1_id as usize], strings[*line_text2_id as usize]
+                    strings[line_text1_id as usize], strings[line_text2_id as usize]
                 ),
             });
         }
@@ -177,7 +186,7 @@ impl Bbq {
     }
     fn inject_script_lines(&self, lines: Vec<ScriptLine>) -> Bbq {
         let mut strings = vec!["".to_string()];
-        let mut tuples = Vec::new();
+        let mut type5_bytes = Vec::new();
         let line_count = lines.len() as u32;
         for line in lines {
             let speaker_text_id = get_index(&mut strings, line.speaker_text);
@@ -208,14 +217,12 @@ impl Bbq {
                 line_text1_id = get_index(&mut strings, line.line_text);
                 line_text2_id = get_index(&mut strings, "".to_string());
             }
-            tuples.push((
-                line.speaker_id,
-                line.audio_flag,
-                line.audio_id,
-                speaker_text_id as u32,
-                line_text1_id as u32,
-                line_text2_id as u32,
-            ));
+            type5_bytes.push(line.speaker_id);
+            type5_bytes.push(line.audio_flag);
+            type5_bytes.extend(line.audio_id.to_le_bytes());
+            type5_bytes.extend((speaker_text_id as u32).to_le_bytes());
+            type5_bytes.extend((line_text1_id as u32).to_le_bytes());
+            type5_bytes.extend((line_text2_id as u32).to_le_bytes());
         }
 
         Bbq {
@@ -224,10 +231,7 @@ impl Bbq {
                 data: [0, 65536, 0, 1, 16, line_count, 0],
             }]),
             type3data: None,
-            type5data: Some(vec![Type5Data {
-                small_data: None,
-                lines: tuples,
-            }]),
+            type5data: Some(vec![Type5Data { bytes: type5_bytes }]),
             type6data: Some(vec![Type6Data {
                 commands: Vec::new(),
             }]),
@@ -285,6 +289,11 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
                 continue;
             }
             let mut bbq_reader = std::fs::File::open(&in_bbq_file)?;
+            let file_size = bbq_reader.seek(std::io::SeekFrom::End(0))?;
+            bbq_reader.seek(std::io::SeekFrom::Start(0))?;
+            if file_size == 0 {
+                continue;
+            }
             if let Ok(bbq) = Bbq::read_bbq(&mut bbq_reader) {
                 if filename.ends_with("_MES.BBQ") {
                     let lines = bbq.get_script_lines().ok_or(std::io::Error::other(
@@ -294,18 +303,19 @@ pub fn extract_text(bbq_dir: &Path, out_dir: &Path) -> Result<()> {
                         writeln!(mes_csv_writer, "{},{}", filename, line.to_csv_string())?;
                     }
                 } else {
-                    let strings = bbq
-                        .get_strings()
-                        .ok_or(std::io::Error::other("Error getting strings from bbq!"))?;
-                    for line in strings {
-                        writeln!(
-                            csv_writer,
-                            "{},\"{}\"",
-                            filename,
-                            line.replace("\"", "\"\"")
-                        )?;
+                    if let Some(strings) = bbq.get_strings() {
+                        for line in strings {
+                            writeln!(
+                                csv_writer,
+                                "{},\"{}\"",
+                                filename,
+                                line.replace("\"", "\"\"")
+                            )?;
+                        }
                     }
                 }
+            } else {
+                eprintln!("Error reading bbq {}!", in_bbq_file.display());
             }
         }
     }

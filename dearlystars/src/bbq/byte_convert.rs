@@ -84,51 +84,15 @@ impl ByteConvert for Type3Data {
 
 impl ByteConvert for Type5Data {
     fn bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        if let Some(x) = self.small_data {
-            bytes.extend(x.to_le_bytes());
-        } else {
-            for line in &self.lines {
-                bytes.push(line.0);
-                bytes.push(line.1);
-                bytes.extend(line.2.to_le_bytes());
-                bytes.extend(line.3.to_le_bytes());
-                bytes.extend(line.4.to_le_bytes());
-                bytes.extend(line.5.to_le_bytes());
-            }
-        }
-        bytes
+        self.bytes.clone()
     }
     fn read(reader: &mut (impl Read + Seek), size: u64) -> Result<Self> {
         if size == 0 {
             return Err(bbq_error("Type 5 data size is zero!").into());
         }
-        if size == 4 {
-            let data = u32::read_le(reader)?;
-            return Ok(Type5Data {
-                small_data: Some(data),
-                lines: Vec::new(),
-            });
-        }
-        if size % 16 != 0 {
-            return Err(bbq_error("Type 5 data size is not a multiple of 16!").into());
-        }
-        let child_count = size / 16;
-        let mut lines = Vec::new();
-        for _ in 0..child_count {
-            lines.push((
-                u8::read_le(reader)?,
-                u8::read_le(reader)?,
-                u16::read_le(reader)?,
-                u32::read_le(reader)?,
-                u32::read_le(reader)?,
-                u32::read_le(reader)?,
-            ))
-        }
-        Ok(Type5Data {
-            small_data: None,
-            lines,
-        })
+        let mut bytes = vec![0; size as usize];
+        reader.read_exact(&mut bytes)?;
+        Ok(Type5Data { bytes })
     }
 }
 

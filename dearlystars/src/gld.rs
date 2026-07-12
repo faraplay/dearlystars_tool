@@ -306,6 +306,9 @@ fn get_map_of_indices_to_replace(png_path: &Path) -> Result<BTreeMap<String, Vec
         let Ok(index) = str::parse::<usize>(index_str) else {
             continue;
         };
+        if index.to_string() != index_str {
+            continue;
+        }
         match indices_map.get_mut(gld_stem) {
             Some(value) => {
                 value.push(index);
